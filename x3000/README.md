@@ -3,15 +3,17 @@
 A working OpenWrt 25.12 image for the GL.iNet GL-X3000 (Spitz AX),
 including the kernel and userspace pieces needed to drive the
 Quectel RM520N-GL 5G modem on the mainline `mhi_pci_generic` +
-`cdc_mbim` path with no proprietary out-of-tree bits.
+`mhi_wwan_mbim` path with no proprietary out-of-tree bits, with
+ModemManager owning the data plane.
 
 ## Why this fork exists
 
 The GL.iNet stock firmware ships an old OpenWrt 21.02 + kernel 5.4
 + a vendor-patched `pcie_mhi` driver that's never been upstreamed.
 Vanilla OpenWrt 25.12 (kernel 6.12) supports the rest of the device
-out of the box but needs three small fixes before the modem actually
-comes up and stays up under load:
+out of the box but needs four small fixes before the modem actually
+comes up, stays up under load, and lets us keep using our own AT
+helpers alongside ModemManager:
 
 1. **`mhi_pci_generic` doesn't recognise the RM520N-GL's PCI ID.**
    Quectel's silicon variant in this device reports the Qualcomm
@@ -32,46 +34,57 @@ comes up and stays up under load:
    chosen bootargs (`target/linux/mediatek/dts/mt7981a-glinet-gl-x3000-xe3000-common.dtsi`)
    so the kernel never tries to take the link down.
 
-3. **`proto mbim` is one-shot — it doesn't notice when the carrier
-   tears down a PDN.** With no ModemManager (we don't ship it; see
-   below), nothing is left listening on the MBIM control channel
-   after `umbim connect` exits. Italian carriers like TIM routinely
-   recycle the PDN on idle / RAT change / session refresh, leaving
-   `wwan0` UP with a stale IP and silent traffic loss. Our
-   `quectel-5g-tools` package ships a small libmbim-glib daemon
-   (`mbim-watchdog`) that subscribes to BASIC_CONNECT/CONNECT
-   indications via `mbim-proxy` and reissues `ifup wwan` whenever
-   the modem reports the Internet context as deactivated. Plus
-   `5g-led-bars`, a Lua daemon that drives the four panel signal
-   LEDs from PCC RSRP (preferring NR5G when present), since the
-   kernel's netdev trigger is binary on/off and pegs the bars at
-   4/4 whenever `wwan0` has carrier.
+3. **ModemManager has no port blacklist without udev.** OpenWrt's
+   ModemManager package is built with `-Dudev=false` and gets its
+   port discovery via `/etc/hotplug.d/{tty,net,wwan}/25-modemmanager-*`
+   shell scripts that call `mmcli --report-kernel-event`. There's no
+   equivalent of udev's `ID_MM_DEVICE_IGNORE` blacklist in this
+   build, so MM grabs every tty it sees — including the RM520N's
+   USB-side `/dev/ttyUSB[0-3]` (DIAG/NMEA/AT/AT2), which our
+   `quectel-5g-tools` helpers (`5g-info`, `5g-monitor`, `5g-lock`,
+   `5g-led-bars`) need to talk raw AT to. We patch the tty hotplug
+   script via `x3000/patches/0001-modemmanager-tty-honour-ignore-tty.patch`
+   to honour an `/etc/modemmanager/ignore-tty` allow-list (shipped
+   by `quectel-5g-tools`) so MM keeps managing only the MHI control
+   surface (`/dev/wwan0at0`, `/dev/wwan0mbim0`).
+
+4. **curl autodetects the brotli we keep around for android-tools.**
+   `android-tools` pulls libbrotli into staging, OpenWrt's curl
+   Makefile has no DEPENDS line for it, and curl's configure happily
+   links libcurl against `libbrotlidec.so.1` if it sees the headers
+   — which trips the install-time `.so` sanity check with
+   _"Package libcurl is missing dependencies"_. Patched via
+   `x3000/patches/0002-curl-disable-brotli-autodetect.patch` to pass
+   `--without-brotli` explicitly.
 
 ## What's different from a stock OpenWrt 25.12 build
 
-Three commits sit on top of upstream `openwrt-25.12`:
+Commits on top of upstream `openwrt-25.12`:
 
   * `mhi_pci_generic: claim Quectel RM520N-GL with Qualcomm subvendor IDs`
   * `mediatek: glinet gl-x3000: disable PCIe runtime PM via pcie_port_pm=off`
   * `x3000: persistent build configuration for the bad.ass fleet`
+  * `swap modem stack from umbim+watchdog to ModemManager`
+  * `patch curl to disable brotli autodetect`
 
-Plus the build-prep machinery under `x3000/`.
+Plus the build-prep machinery under `x3000/` (incl. patches to feed
+files applied at the end of `prepare.sh`).
 
 The build config drops a few things that upstream's GL-X3000 device
 recipe pulls in:
 
-  * **ModemManager + libqmi + libqrtr-glib + dbus + luci-proto-{modemmanager,qmi}.**
-    MM holds /dev/ttyUSB2 (or its MBIM control device equivalent)
-    exclusively, blocking `quectel-5g-tools`' read-only AT clients,
-    and its dbus / glib2 / libqrtr-glib chain is much heavier than
-    the routes we actually use. Dropped in favour of `proto mbim` +
-    `mbim-watchdog`.
   * **samba4-server + luci-app-samba4.** The fleet doesn't share
     files over SMB.
   * **kmod-scsi-core + kmod-usb-storage.** No USB storage use case.
 
 And adds:
 
+  * **ModemManager + libmm-glib + dbus + luci-proto-modemmanager.**
+    MM owns the data plane: connect/reconnect, PIN unlock, signal
+    monitoring, RAT change handling, carrier-side disconnect
+    recovery. Replaces a previous DIY approach (umbim + a custom
+    `mbim-watchdog`) that couldn't reliably catch silent idle-timer
+    drops on this firmware.
   * **adb + fastboot** (nmeum/android-tools 35.0.2 with a small patch
     fixing the libusb claim bug for non-contiguous USB interface
     numbers — the RM520N publishes interfaces 0,1,2,3,5 and the
@@ -79,14 +92,15 @@ And adds:
   * **qfirehose** (vjt fork pinned at 1.4.17; upstream 1.4.11 bricks
     RM520N).
   * **quectel-5g-tools** (Lua AT helpers `5g-info`, `5g-monitor`,
-    `5g-lock`, `modem-debug`; the `5g-led-bars` procd daemon driving
-    the panel signal LEDs from RSRP; the `mbim-watchdog` libmbim-glib
-    daemon for indication-driven PDN reconnect; a Prometheus
-    collector).
+    `5g-lock`, `modem-debug` reading `/dev/ttyUSB2`; the `5g-led-bars`
+    procd daemon driving the panel signal LEDs from PCC/SCC NR-RSRP;
+    a Prometheus collector; the `/etc/modemmanager/ignore-tty`
+    config telling our patched MM hotplug script which tty ports
+    to leave alone).
   * **pciutils + usbutils** (lspci / lsusb baked in for diagnosing
     modem PCIe / USB topology).
-  * **MBIM stack**: umbim, libmbim, mbim-utils, glib2,
-    kmod-usb-net-cdc-mbim, luci-proto-mbim.
+  * **libmbim + mbim-utils**: pulled in by ModemManager and kept
+    available for diagnostics (`mbimcli`, `mbim-proxy`).
   * **speedtest-go**, **telegraf**, **wifi-dethrash-collector**.
 
 ## Hardware
@@ -183,13 +197,42 @@ those SHAs.
                         Copied to .config by prepare.sh.
 x3000/
 ├── README.md           This file.
-├── prepare.sh          Sets up feeds-local/, feeds.conf, .config.
+├── prepare.sh          Sets up feeds-local/, feeds.conf, .config; applies
+                        x3000/patches/ against feed files with `-F 0` so
+                        upstream drift fails loud.
 ├── feeds.conf          Verbatim copy installed at /feeds.conf
                         (with feeds-local/ rewritten to absolute path).
-└── custom-feeds.txt    Repo list driving prepare.sh.
+├── custom-feeds.txt    Repo list driving prepare.sh.
+└── patches/            Unified diffs applied to feeds/ files after
+                        `feeds install -a`. patch is invoked with
+                        --forward and -F 0 so the loop is idempotent
+                        AND a context drift is a hard fail. Currently:
+                          * 0001-modemmanager-tty-honour-ignore-tty.patch
+                          * 0002-curl-disable-brotli-autodetect.patch
 target/linux/generic/pending-6.12/
 └── gl-x3000-quectel-pci-id.patch   Kernel patch (commit 8cc71da72a).
 target/linux/mediatek/dts/
 └── mt7981a-glinet-gl-x3000-xe3000-common.dtsi   pcie_port_pm=off
                                                  (commit 4087faad55).
 ```
+
+## Post-flash modem config
+
+Sysupgrade preserves `/etc/config/*`, so the `network.wwan` section
+ends up whatever the previous image set it to. For a clean MM
+attach, set it manually after first boot:
+
+```sh
+uci set network.wwan.proto='modemmanager'
+uci set network.wwan.device="$(readlink -f /sys/class/wwan/wwan0mbim0/device/../..)"
+uci set network.wwan.apn='<your-apn>'
+uci set network.wwan.auth='none'
+uci set network.wwan.iptype='ipv4v6'
+uci commit network
+ifup wwan
+```
+
+The `device` field must point at the modem's PHYSICAL parent
+(PCI device for MHI, USB device for cdc-wdm) — not its wwan/usbmisc
+child. The `readlink ... /../..` form above resolves to the right
+place for the GL-X3000's PCIe-attached RM520N.
