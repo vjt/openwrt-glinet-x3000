@@ -104,11 +104,56 @@ make defconfig FORCE=1 >/dev/null
 
 # --- feeds update + install -----------------------------------------------
 
+# `./scripts/feeds update -a` does `git pull --rebase` inside each feed
+# checkout. If we patched a feed file on a previous run (see the patch
+# loop further down), the rebase blocks on those unstaged changes — so
+# reset every feed back to its tracked HEAD first. The patches are
+# re-applied below from x3000/patches/, so this round-trip is safe.
+for feeddir in "$ROOT"/feeds/*; do
+    [[ -d "$feeddir/.git" ]] || continue
+    git -C "$feeddir" checkout --quiet -- . 2>/dev/null || true
+done
+
 echo "==> feeds update -a"
 ./scripts/feeds update -a
 
 echo "==> feeds install -a"
 ./scripts/feeds install -a
+
+# --- Apply unified-diff patches against feed contents ---------------------
+#
+# OpenWrt's quilt-based patch system applies to upstream package SOURCES,
+# not to the OpenWrt-side `files/` overlays each package ships. We
+# nonetheless need to tweak one such file (modemmanager's tty hotplug,
+# see x3000/patches/0001-modemmanager-tty-honour-ignore-tty.patch for
+# the why), so we apply our patches here against the relevant feed paths.
+#
+# Idempotent: if a patch is already applied (e.g. re-running prepare.sh
+# without `feeds update -a` having happened in between), we detect that
+# via a reverse dry-run and skip silently. If neither forward nor reverse
+# applies cleanly the script bails out — that's the loud signal that
+# upstream has drifted and the patch needs refreshing.
+PATCH_DIR="$ROOT/x3000/patches"
+if [[ -d "$PATCH_DIR" ]]; then
+    for patchfile in "$PATCH_DIR"/*.patch; do
+        [[ -f "$patchfile" ]] || continue
+        name="$(basename "$patchfile")"
+        # -F 0 disables fuzzy matching: any context drift is a hard fail,
+        # which is the whole point of using a unified diff over a files/
+        # overlay — we want to know the moment upstream changes the file
+        # we patch.
+        if patch --reverse --dry-run --silent -F 0 -p1 < "$patchfile" >/dev/null 2>&1; then
+            echo "==> patch already applied: $name"
+            continue
+        fi
+        echo "==> applying patch: $name"
+        if ! patch --forward -r - -F 0 -p1 < "$patchfile"; then
+            echo "FATAL: $name did not apply cleanly. Upstream feed has likely" >&2
+            echo "drifted; refresh the patch against the new upstream file." >&2
+            exit 1
+        fi
+    done
+fi
 
 echo
 echo "Done. Run 'make -j\$(nproc)' (add V=s for verbose output)."

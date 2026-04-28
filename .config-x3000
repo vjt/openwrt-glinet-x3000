@@ -14,11 +14,16 @@ CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT="/usr/local/go"
 # CONFIG_GOLANG_BUILD_BOOTSTRAP is not set
 # Speedtest-go binary (Go-based) for on-device speed checks.
 CONFIG_PACKAGE_speedtest-go=y
-# Modem stack: MBIM via the mainline mhi_pci_generic + cdc_mbim path.
-# We dropped ModemManager (heavy, hostile to AT lockfile, ttyUSB2 conflict
-# with quectel-5g-tools); proto mbim runs umbim against /dev/wwan0mbim0,
-# and our own mbim-watchdog (in quectel-5g-tools) handles PDN-deactivate
-# reconnects via libmbim Connect indications.
+# Modem stack: ModemManager driving MBIM over PCIe MHI (mainline
+# mhi_pci_generic + mhi_wwan_mbim). MM owns the data plane (connect,
+# reconnect on carrier-side disconnect, RAT change, signal monitoring,
+# PIN unlock); netifd's `proto modemmanager` is the bridge.
+#
+# We tell MM to ignore /dev/ttyUSB[0-3] via /etc/modemmanager/ignore-tty
+# (consumed by a patched 25-modemmanager-tty hotplug script — see
+# x3000/prepare.sh) so quectel-5g-tools keeps owning the AT port for our
+# 5g-info / 5g-monitor / 5g-lock / 5g-led-bars helpers. MM drives the
+# MHI control surface (/dev/wwan0at0, /dev/wwan0mbim0) which is plenty.
 CONFIG_PACKAGE_kmod-mhi-bus=y
 CONFIG_PACKAGE_kmod-mhi-net=y
 CONFIG_PACKAGE_kmod-mhi-pci-generic=y
@@ -26,11 +31,15 @@ CONFIG_PACKAGE_kmod-mhi-wwan-ctrl=y
 CONFIG_PACKAGE_kmod-mhi-wwan-mbim=y
 CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=y
 CONFIG_PACKAGE_kmod-wwan=y
-CONFIG_PACKAGE_umbim=y
+CONFIG_PACKAGE_modemmanager=y
+CONFIG_PACKAGE_dbus=y
+CONFIG_PACKAGE_glib2=y
+CONFIG_PACKAGE_luci-proto-modemmanager=y
+# MM auto-pulls libmbim+libqmi via deps; keep these enabled so the proxy
+# binary + mbimcli are available for diagnostics and so libmbim ABI is
+# present for libmm-glib clients.
 CONFIG_PACKAGE_libmbim=y
 CONFIG_PACKAGE_mbim-utils=y
-CONFIG_PACKAGE_glib2=y
-CONFIG_PACKAGE_luci-proto-mbim=y
 # Hardware enumeration tools (lspci / lsusb) for diagnosing modem topology.
 CONFIG_PACKAGE_pciutils=y
 CONFIG_PACKAGE_usbutils=y
