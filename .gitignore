@@ -18,6 +18,8 @@
 /overlay
 /package/feeds
 /package/openwrt-packages
+/feeds-local
+/.build-deps
 /*.patch
 /llvm-bpf*
 key-build*
