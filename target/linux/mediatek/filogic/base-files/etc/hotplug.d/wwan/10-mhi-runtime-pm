@@ -1,0 +1,36 @@
+#!/bin/sh
+#
+# mhi_pci_generic enables runtime PM on the modem's PCI function once the
+# modem reaches mission mode (pm_runtime_allow() in mhi_pci_status_cb) and
+# then autosuspends it to D3hot after 2 s idle. The Quectel RM520N-GL profile
+# relies on a sideband wake GPIO these boards do not wire up, so D3hot round
+# trips can stall the MHI data path while ModemManager keeps reporting the
+# bearer as connected. pcie_port_pm=off only covers the root port: pin the
+# endpoint too. MHI creates the wwan ports after enabling runtime PM, so this
+# also re-pins after the driver recovers a crashed modem.
+
+[ "$ACTION" = "add" ] || exit 0
+
+. /lib/functions.sh
+
+case "$(board_name)" in
+glinet,gl-x3000|\
+glinet,gl-xe3000)
+	;;
+*)
+	exit 0
+	;;
+esac
+
+dev="/sys$DEVPATH"
+while [ "$dev" != "/sys" ]; do
+	dev="${dev%/*}"
+	case "$(readlink "$dev/subsystem")" in
+	*/bus/pci)
+		[ "$(cat "$dev/power/control")" = "on" ] && exit 0
+		echo on > "$dev/power/control"
+		logger -t mhi-runtime-pm "runtime PM pinned on for ${dev##*/}"
+		exit 0
+		;;
+	esac
+done
