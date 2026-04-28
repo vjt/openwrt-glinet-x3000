@@ -101,7 +101,12 @@ And adds:
     modem PCIe / USB topology).
   * **libmbim + mbim-utils**: pulled in by ModemManager and kept
     available for diagnostics (`mbimcli`, `mbim-proxy`).
-  * **speedtest-go**, **telegraf**, **wifi-dethrash-collector**.
+  * **speedtest-go**, **telegraf-full** (every input/output plugin
+    compiled in — drop to the `telegraf` small variant if you want a
+    smaller binary and only need the plugins enumerated in the feed
+    Makefile's `TELEGRAF_SMALL_PLUGINS`), **wifi-dethrash-collector**.
+  * **procps-ng-ps**: real `ps` replacing busybox's stub, swapped in
+    via the OpenWrt alternatives system at `/bin/ps`.
 
 ## Hardware
 
