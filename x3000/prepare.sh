@@ -89,7 +89,12 @@ done < "$FEEDS_LIST"
 # --- Drop the build-host feeds.conf in place ------------------------------
 
 echo "==> Installing feeds.conf"
-cp -f "$FEEDS_CONF_SRC" "$ROOT/feeds.conf"
+# scripts/feeds resolves `src-link` paths against an internal CWD that is
+# not the SDK root, so a relative `feeds-local` here ends up pointing at
+# the wrong place and the index comes out empty. Substitute the absolute
+# path to feeds-local under the current build root before installing.
+sed "s|^src-link custom feeds-local\$|src-link custom $LOCAL|" \
+    "$FEEDS_CONF_SRC" > "$ROOT/feeds.conf"
 
 # --- Apply the X3000 config overlay ---------------------------------------
 
