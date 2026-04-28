@@ -1,0 +1,104 @@
+CONFIG_TARGET_mediatek=y
+CONFIG_TARGET_mediatek_filogic=y
+CONFIG_TARGET_mediatek_filogic_DEVICE_glinet_gl-x3000=y
+# Custom packages baked into the image (rest pulled from local feed post-flash)
+CONFIG_PACKAGE_adb=y
+CONFIG_PACKAGE_attendedsysupgrade-common=y
+CONFIG_PACKAGE_qfirehose=y
+CONFIG_PACKAGE_quectel-5g-tools=y
+CONFIG_PACKAGE_telegraf=y
+CONFIG_PACKAGE_wifi-dethrash-collector=y
+# Use Go pre-installed in Dockerfile.trunk; the in-tree golang-bootstrap
+# can't compile on linux/arm64 hosts.
+CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT="/usr/local/go"
+# CONFIG_GOLANG_BUILD_BOOTSTRAP is not set
+# Speedtest-go binary (Go-based) for on-device speed checks.
+CONFIG_PACKAGE_speedtest-go=y
+# Modem stack: MBIM via the mainline mhi_pci_generic + cdc_mbim path.
+# We dropped ModemManager (heavy, hostile to AT lockfile, ttyUSB2 conflict
+# with quectel-5g-tools); proto mbim runs umbim against /dev/wwan0mbim0,
+# and our own mbim-watchdog (in quectel-5g-tools) handles PDN-deactivate
+# reconnects via libmbim Connect indications.
+CONFIG_PACKAGE_kmod-mhi-bus=y
+CONFIG_PACKAGE_kmod-mhi-net=y
+CONFIG_PACKAGE_kmod-mhi-pci-generic=y
+CONFIG_PACKAGE_kmod-mhi-wwan-ctrl=y
+CONFIG_PACKAGE_kmod-mhi-wwan-mbim=y
+CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=y
+CONFIG_PACKAGE_kmod-wwan=y
+CONFIG_PACKAGE_umbim=y
+CONFIG_PACKAGE_libmbim=y
+CONFIG_PACKAGE_mbim-utils=y
+CONFIG_PACKAGE_glib2=y
+CONFIG_PACKAGE_luci-proto-mbim=y
+# Hardware enumeration tools (lspci / lsusb) for diagnosing modem topology.
+CONFIG_PACKAGE_pciutils=y
+CONFIG_PACKAGE_usbutils=y
+# Storage tooling we don't want shipped.
+# CONFIG_PACKAGE_kmod-scsi-core is not set
+# CONFIG_PACKAGE_kmod-usb-storage is not set
+CONFIG_PACKAGE_kmod-tcp-bbr=y
+CONFIG_PACKAGE_libattr=y
+CONFIG_PACKAGE_libexpat=y
+CONFIG_PACKAGE_libffi=y
+CONFIG_PACKAGE_libiwinfo=y
+CONFIG_PACKAGE_libiwinfo-data=y
+CONFIG_PACKAGE_liblucihttp=y
+CONFIG_PACKAGE_liblucihttp-ucode=y
+CONFIG_PACKAGE_libpcre2=y
+# LuCI core
+CONFIG_PACKAGE_cgi-io=y
+CONFIG_PACKAGE_luci-app-attendedsysupgrade=y
+CONFIG_PACKAGE_luci-app-firewall=y
+CONFIG_PACKAGE_luci-app-package-manager=y
+CONFIG_PACKAGE_luci-base=y
+CONFIG_PACKAGE_luci-lib-uqr=y
+CONFIG_PACKAGE_luci-light=y
+CONFIG_PACKAGE_luci-mod-admin-full=y
+CONFIG_PACKAGE_luci-mod-network=y
+CONFIG_PACKAGE_luci-mod-status=y
+CONFIG_PACKAGE_luci-mod-system=y
+CONFIG_PACKAGE_luci-proto-ipv6=y
+CONFIG_PACKAGE_luci-proto-ppp=y
+CONFIG_PACKAGE_luci-ssl=y
+CONFIG_PACKAGE_luci-theme-bootstrap=y
+CONFIG_PACKAGE_px5g-mbedtls=y
+CONFIG_PACKAGE_rpcd=y
+CONFIG_PACKAGE_rpcd-mod-file=y
+CONFIG_PACKAGE_rpcd-mod-iwinfo=y
+CONFIG_PACKAGE_rpcd-mod-luci=y
+CONFIG_PACKAGE_rpcd-mod-rpcsys=y
+CONFIG_PACKAGE_rpcd-mod-rrdns=y
+CONFIG_PACKAGE_rpcd-mod-ucode=y
+CONFIG_PACKAGE_ucode-mod-html=y
+CONFIG_PACKAGE_ucode-mod-log=y
+CONFIG_PACKAGE_ucode-mod-math=y
+CONFIG_PACKAGE_uhttpd=y
+CONFIG_PACKAGE_uhttpd-mod-ubus=y
+CONFIG_PCRE2_JIT_ENABLED=y
+# Lua (needed for quectel-5g-tools + 5g-led-bars)
+CONFIG_PACKAGE_lua=y
+CONFIG_PACKAGE_luaposix=y
+# CLI tools
+CONFIG_PACKAGE_curl=y
+CONFIG_PACKAGE_htop=y
+CONFIG_PACKAGE_vim-full=y
+CONFIG_PACKAGE_tcpdump-mini=y
+CONFIG_PACKAGE_ip-full=y
+CONFIG_PACKAGE_ethtool=y
+CONFIG_PACKAGE_iftop=y
+CONFIG_PACKAGE_iperf3=y
+CONFIG_PACKAGE_bind-dig=y
+CONFIG_PACKAGE_strace=y
+CONFIG_PACKAGE_rsync=y
+# Prometheus
+CONFIG_PACKAGE_prometheus-node-exporter-lua=y
+CONFIG_PACKAGE_prometheus-node-exporter-lua-netstat=y
+CONFIG_PACKAGE_prometheus-node-exporter-lua-openwrt=y
+CONFIG_PACKAGE_prometheus-node-exporter-lua-wifi=y
+CONFIG_PACKAGE_prometheus-node-exporter-lua-wifi_stations=y
+# DNS
+CONFIG_PACKAGE_dnsmasq-full=y
+# CONFIG_PACKAGE_dnsmasq is not set
+# Telegraf — install post-flash via apk from feeds.bad.ass (needs x86_64 Go build)
+# CONFIG_PACKAGE_telegraf-full is not set
