@@ -3,7 +3,6 @@ CONFIG_TARGET_mediatek_filogic=y
 CONFIG_TARGET_mediatek_filogic_DEVICE_glinet_gl-x3000=y
 # Custom packages baked into the image (rest pulled from local feed post-flash)
 CONFIG_PACKAGE_adb=y
-CONFIG_PACKAGE_attendedsysupgrade-common=y
 CONFIG_PACKAGE_qfirehose=y
 CONFIG_PACKAGE_quectel-5g-tools=y
 CONFIG_PACKAGE_telegraf-full=y
@@ -57,7 +56,6 @@ CONFIG_PACKAGE_liblucihttp-ucode=y
 CONFIG_PACKAGE_libpcre2=y
 # LuCI core
 CONFIG_PACKAGE_cgi-io=y
-CONFIG_PACKAGE_luci-app-attendedsysupgrade=y
 CONFIG_PACKAGE_luci-app-firewall=y
 CONFIG_PACKAGE_luci-app-package-manager=y
 CONFIG_PACKAGE_luci-base=y
