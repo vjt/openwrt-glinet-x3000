@@ -1,0 +1,33 @@
+From: Marcello Barnaba <vjt@openssl.it>
+Subject: curl: pass --without-brotli to configure
+
+The curl source autodetects brotli via pkg-config and links libcurl
+against libbrotlidec when the headers happen to be in staging_dir, but
+the OpenWrt curl Makefile has no DEPENDS entry for libbrotli — so the
+post-link sanity check explodes with:
+
+    Package libcurl is missing dependencies for the following libraries:
+    libbrotlidec.so.1
+
+We don't actually want brotli compression in libcurl on this image
+(nothing on the device negotiates content-encoding: br), but our
+android-tools custom feed pulls in libbrotli, which puts the headers
+into staging and triggers curl's autodetect. Force --without-brotli
+so curl produces a libbrotli-free libcurl regardless of staging
+contents.
+
+Upstream: not submittable as-is — the right fix is for OpenWrt's curl
+Makefile to gain a CURL_BROTLI option à la CURL_ZSTD. This patch is
+just enough to unbreak our image build.
+
+--- a/feeds/packages/net/curl/Makefile
++++ b/feeds/packages/net/curl/Makefile
+@@ -123,6 +123,7 @@
+ 	--without-ca-path \
+ 	--without-libpsl \
+ 	--without-zstd \
++	--without-brotli \
+ 	--with-ca-bundle=/etc/ssl/certs/ca-certificates.crt \
+ 	\
+ 	$(call autoconf_bool,CONFIG_IPV6,ipv6) \
+
