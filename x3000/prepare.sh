@@ -1,27 +1,50 @@
 #!/usr/bin/env bash
 #
 # x3000/prepare.sh — set up the OpenWrt build tree to produce a GL-X3000
-# image with the bad.ass fleet baseline.
+# image. Two variants are supported:
+#
+#   private  bad.ass fleet image — telegraf-full pushing to
+#            metrics.bad.ass, internal CA, signed-feed pubkey.
+#            (Default; preserves the historical behaviour.)
+#
+#   public   no bad.ass extras — same hardware enablement (modem stack,
+#            quectel-5g-tools, adb, LuCI bundle) but no internal CA,
+#            no internal feed key, no telegraf push.
+#
+# Usage:  x3000/prepare.sh [private|public]
 #
 # What it does, idempotently:
 #   1. Clones the custom package repos listed in x3000/custom-feeds.txt
 #      into .build-deps/ (gitignored). Each repo is fetched + checked out
-#      to the pinned ref on every run, so changing the ref + re-running
-#      reflects the new state without you having to clean up.
+#      to the pinned ref on every run.
 #   2. Creates symlinks under feeds-local/ pointing at the package
-#      subdirectory inside each clone (e.g. .build-deps/<repo>/openwrt/<pkg>).
-#      `feeds-local/` is what /feeds.conf's `src-link custom` references.
+#      subdirectory inside each clone. `feeds-local/` is what
+#      /feeds.conf's `src-link custom` references.
 #   3. Copies x3000/feeds.conf -> /feeds.conf so OpenWrt's `feeds update`
 #      sees the standard 25.12 feeds plus our custom symlinks.
-#   4. Copies .config-x3000 -> /.config and runs `make defconfig` to
-#      expand it into a full config tree.
-#   5. Runs `./scripts/feeds update -a && ./scripts/feeds install -a` so
+#   4. Composes /.config from x3000/config.common + x3000/config.<variant>
+#      and runs `make defconfig` to expand it into a full config tree.
+#   5. Wipes /files/ and rebuilds it from x3000/files-common/ +
+#      x3000/files-<variant>/, so swapping variants leaves no stale
+#      overlay files behind.
+#   6. Records the active variant in /.x3000-variant for build.sh and
+#      sanity checks.
+#   7. Runs `./scripts/feeds update -a && ./scripts/feeds install -a` so
 #      every Makefile is symlinked into package/feeds/.
-#
-# After it finishes you can `make -j$(nproc)` (or `V=s` for verbose) and
-# the artifacts land under bin/targets/mediatek/filogic/.
+#   8. Applies x3000/patches/*.patch against feed-side files (modemmanager
+#      tty hotplug etc.).
 
 set -euo pipefail
+
+VARIANT="${1:-private}"
+case "$VARIANT" in
+    private|public) ;;
+    *)
+        echo "usage: $0 [private|public]" >&2
+        echo "  unknown variant: $VARIANT" >&2
+        exit 2
+        ;;
+esac
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
@@ -29,7 +52,13 @@ DEPS="$ROOT/.build-deps"
 LOCAL="$ROOT/feeds-local"
 FEEDS_LIST="$ROOT/x3000/custom-feeds.txt"
 FEEDS_CONF_SRC="$ROOT/x3000/feeds.conf"
-CONFIG_OVERLAY="$ROOT/.config-x3000"
+CONFIG_COMMON="$ROOT/x3000/config.common"
+CONFIG_VARIANT="$ROOT/x3000/config.$VARIANT"
+FILES_COMMON="$ROOT/x3000/files-common"
+FILES_VARIANT="$ROOT/x3000/files-$VARIANT"
+VARIANT_MARKER="$ROOT/.x3000-variant"
+
+echo "==> Preparing X3000 build tree (variant=$VARIANT)"
 
 mkdir -p "$DEPS" "$LOCAL"
 
@@ -37,6 +66,12 @@ if [[ ! -f "$FEEDS_LIST" ]]; then
     echo "missing $FEEDS_LIST" >&2
     exit 1
 fi
+for f in "$CONFIG_COMMON" "$CONFIG_VARIANT"; do
+    [[ -f "$f" ]] || { echo "missing $f" >&2; exit 1; }
+done
+for d in "$FILES_COMMON" "$FILES_VARIANT"; do
+    [[ -d "$d" ]] || { echo "missing $d" >&2; exit 1; }
+done
 
 # --- Clone / refresh custom repos and link them into feeds-local/ ---------
 
@@ -96,11 +131,32 @@ echo "==> Installing feeds.conf"
 sed "s|^src-link custom feeds-local\$|src-link custom $LOCAL|" \
     "$FEEDS_CONF_SRC" > "$ROOT/feeds.conf"
 
-# --- Apply the X3000 config overlay ---------------------------------------
+# --- Compose .config from common + variant --------------------------------
 
-echo "==> Applying $CONFIG_OVERLAY -> .config"
-cp -f "$CONFIG_OVERLAY" "$ROOT/.config"
+echo "==> Composing .config from config.common + config.$VARIANT"
+{
+    cat "$CONFIG_COMMON"
+    echo
+    echo "# --- variant: $VARIANT ---"
+    cat "$CONFIG_VARIANT"
+} > "$ROOT/.config"
 make defconfig FORCE=1 >/dev/null
+
+# --- Compose files/ overlay from files-common + files-<variant> ----------
+
+echo "==> Composing files/ from files-common + files-$VARIANT"
+# Wipe first so leftovers from a previous variant can't sneak in.
+rm -rf "$ROOT/files"
+mkdir -p "$ROOT/files"
+# rsync --exclude='.gitkeep' keeps git-bookkeeping out of the composed
+# rootfs at copy time — no copy-then-delete dance. -a preserves modes
+# (uci-defaults scripts must stay executable).
+rsync -a --exclude='.gitkeep' "$FILES_COMMON"/ "$ROOT/files/"
+rsync -a --exclude='.gitkeep' "$FILES_VARIANT"/ "$ROOT/files/"
+
+# --- Record the variant ---------------------------------------------------
+
+echo "$VARIANT" > "$VARIANT_MARKER"
 
 # --- feeds update + install -----------------------------------------------
 
@@ -156,5 +212,6 @@ if [[ -d "$PATCH_DIR" ]]; then
 fi
 
 echo
-echo "Done. Run 'make -j\$(nproc)' (add V=s for verbose output)."
-echo "Artifacts will land under bin/targets/mediatek/filogic/."
+echo "Done. variant=$VARIANT"
+echo "Run 'make -j\$(nproc)' (add V=s for verbose output)"
+echo "or 'x3000/build.sh $VARIANT' to also relocate artifacts to bin-x3000-$VARIANT/."

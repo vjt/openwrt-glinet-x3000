@@ -101,10 +101,10 @@ And adds:
     modem PCIe / USB topology).
   * **libmbim + mbim-utils**: pulled in by ModemManager and kept
     available for diagnostics (`mbimcli`, `mbim-proxy`).
-  * **speedtest-go**, **telegraf-full** (every input/output plugin
-    compiled in — drop to the `telegraf` small variant if you want a
-    smaller binary and only need the plugins enumerated in the feed
-    Makefile's `TELEGRAF_SMALL_PLUGINS`), **wifi-dethrash-collector**.
+  * **speedtest-go**, **wifi-dethrash-collector**.
+  * **telegraf-full** — *private variant only*, since it pushes
+    metrics to `metrics.bad.ass` which only exists inside the home
+    network. Toggled in `x3000/config.private`.
   * **procps-ng-ps**: real `ps` replacing busybox's stub, swapped in
     via the OpenWrt alternatives system at `/bin/ps`.
 
@@ -139,27 +139,55 @@ And adds:
 
 ## Build
 
+The build supports two variants, selected by argument to `prepare.sh`
+(or `build.sh`, the one-shot driver):
+
+  * **`private`** — image with builder-internal extras. Composes the
+    rootfs from `files-common/` + `files-private/`, where the latter
+    is a per-builder slot whose contents are gitignored so each
+    builder keeps their CA / feed-signing pubkey / internal config
+    out of the public repo (see `files-private/README.md`). Also
+    bakes in `telegraf-full` for metrics push.
+
+  * **`public`** — vanilla image suitable for anyone with the same
+    hardware (GL-X3000 + RM520N-GL). Same modem stack, same custom
+    packages (qfirehose, quectel-5g-tools, adb, LuCI bundle), no
+    private overlay, no telegraf.
+
 ```
 git clone https://github.com/vjt/openwrt-glinet-x3000.git
 cd openwrt-glinet-x3000
-./x3000/prepare.sh
-make -j$(nproc)              # add V=s for verbose
+
+# One-shot: prepare + make + relocate output to bin-x3000-<variant>/
+./x3000/build.sh private          # bad.ass fleet image
+./x3000/build.sh public           # public image
+./x3000/build.sh public -- V=s    # forward extra args to make
+
+# Or step-by-step (artifacts land in bin/ — overwritten on every build):
+./x3000/prepare.sh public
+make -j$(nproc)
 ```
 
 `prepare.sh` is idempotent — re-run it any time `x3000/custom-feeds.txt`
-changes (e.g. you bumped a custom package) and it will refresh the
-clones, refresh the symlinks under `feeds-local/`, and re-apply the
-`.config-x3000` overlay.
+changes (e.g. you bumped a custom package) or you switch variants and
+it will refresh the clones, refresh the symlinks under `feeds-local/`,
+recompose `.config` from `x3000/config.common + x3000/config.<variant>`,
+and recompose `files/` from `x3000/files-common/ + x3000/files-<variant>/`.
+The active variant is recorded in `.x3000-variant`.
 
-After the build finishes the artifacts land under
+After `build.sh` finishes the artifacts land under
 
 ```
-bin/targets/mediatek/filogic/
+bin-x3000-<variant>/targets/mediatek/filogic/
 ├── openwrt-mediatek-filogic-glinet_gl-x3000-squashfs-sysupgrade.bin
 ├── openwrt-mediatek-filogic-glinet_gl-x3000-squashfs-factory.bin
 ├── openwrt-mediatek-filogic-glinet_gl-x3000.manifest
 └── …
 ```
+
+(Plain `make` without `BIN_DIR=` writes to the default `bin/`, which
+gets overwritten by the next build of the other variant — use
+`build.sh` if you want both variants to coexist on disk.)
 
 Use `sysupgrade.bin` for an in-place upgrade from a router that's
 already running OpenWrt; use `factory.bin` only via stock recovery
@@ -169,8 +197,8 @@ so plan accordingly.
 
 ## On aarch64 build hosts
 
-`.config-x3000` already disables `CONFIG_GOLANG_BUILD_BOOTSTRAP` and
-sets `GOLANG_EXTERNAL_BOOTSTRAP_ROOT="/usr/local/go"`. Install Go
+`x3000/config.common` already disables `CONFIG_GOLANG_BUILD_BOOTSTRAP`
+and sets `GOLANG_EXTERNAL_BOOTSTRAP_ROOT="/usr/local/go"`. Install Go
 ≥ 1.21 there before running `prepare.sh`:
 
 ```
@@ -179,8 +207,8 @@ sudo tar -C /usr/local -xzf go1.23.5.linux-arm64.tar.gz
 ```
 
 If your Go install lives elsewhere, edit
-`CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT` in `.config-x3000` before the
-`prepare.sh` run that copies it into `.config`.
+`CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT` in `x3000/config.common` before
+the `prepare.sh` run that composes it into `.config`.
 
 ## Pinning custom packages
 
@@ -198,16 +226,28 @@ those SHAs.
 ## Layout
 
 ```
-.config-x3000           Build-config overlay (target + package selections).
-                        Copied to .config by prepare.sh.
 x3000/
 ├── README.md           This file.
-├── prepare.sh          Sets up feeds-local/, feeds.conf, .config; applies
-                        x3000/patches/ against feed files with `-F 0` so
-                        upstream drift fails loud.
+├── prepare.sh          Variant-aware tree setup: feeds-local/, feeds.conf,
+                        composes .config and files/ from common + variant
+                        sources, applies x3000/patches/ with `-F 0`.
+├── build.sh            One-shot driver: prepare.sh + make with a
+                        variant-specific BIN_DIR (bin-x3000-<variant>/).
 ├── feeds.conf          Verbatim copy installed at /feeds.conf
                         (with feeds-local/ rewritten to absolute path).
 ├── custom-feeds.txt    Repo list driving prepare.sh.
+├── config.common       Shared build-config overlay (target + the bulk of
+                        package selections).
+├── config.private      Private-only delta (telegraf-full, etc.).
+├── config.public       Public-only delta (explicit unsets for telegraf).
+├── files-common/       Rootfs overlay shipped in every variant.
+├── files-private/      Rootfs overlay only in private. Per-builder slot:
+                        only .gitkeep is tracked, all contents are
+                        gitignored, so each builder keeps their internal
+                        CA / feed-signing pubkey / customfeeds.list
+                        local. Empty in a fresh clone — populate before
+                        building private if you need any of those.
+├── files-public/       Rootfs overlay only in public (currently empty).
 └── patches/            Unified diffs applied to feeds/ files after
                         `feeds install -a`. patch is invoked with
                         --forward and -F 0 so the loop is idempotent
@@ -220,6 +260,9 @@ target/linux/mediatek/dts/
 └── mt7981a-glinet-gl-x3000-xe3000-common.dtsi   pcie_port_pm=off
                                                  (commit 4087faad55).
 ```
+
+`prepare.sh` writes its composed outputs to `/.config` and `/files/`
+(both gitignored), and records the active variant in `/.x3000-variant`.
 
 ## Post-flash modem config
 

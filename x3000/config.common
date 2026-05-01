@@ -6,7 +6,6 @@ CONFIG_TARGET_mediatek_filogic_DEVICE_glinet_gl-x3000=y
 CONFIG_PACKAGE_adb=y
 CONFIG_PACKAGE_qfirehose=y
 CONFIG_PACKAGE_quectel-5g-tools=y
-CONFIG_PACKAGE_telegraf-full=y
 CONFIG_PACKAGE_wifi-dethrash-collector=y
 # Use Go pre-installed in Dockerfile.trunk; the in-tree golang-bootstrap
 # can't compile on linux/arm64 hosts.

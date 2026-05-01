@@ -20,6 +20,16 @@
 /package/openwrt-packages
 /feeds-local
 /.build-deps
+/.config-x3000
+/.x3000-variant
+/bin-x3000-*
+
+# files-private/ is the per-builder slot for stuff that should ship in
+# the private rootfs but stay out of the public repo (internal CA,
+# feed-signing pubkey, etc.). Only .gitkeep is tracked so the directory
+# survives in git; everything else is local-only.
+/x3000/files-private/*
+!/x3000/files-private/.gitkeep
 /*.patch
 /llvm-bpf*
 key-build*
