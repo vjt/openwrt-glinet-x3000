@@ -63,7 +63,8 @@ Commits on top of upstream `openwrt-25.12`:
 
   * `mhi_pci_generic: claim Quectel RM520N-GL with Qualcomm subvendor IDs`
   * `mediatek: glinet gl-x3000: disable PCIe runtime PM via pcie_port_pm=off`
-  * `x3000: persistent build configuration for the bad.ass fleet`
+  * `x3000: persistent build configuration` (the build-prep machinery
+    + variant split under `x3000/`)
   * `swap modem stack from umbim+watchdog to ModemManager`
   * `patch curl to disable brotli autodetect`
 
@@ -73,8 +74,8 @@ files applied at the end of `prepare.sh`).
 The build config drops a few things that upstream's GL-X3000 device
 recipe pulls in:
 
-  * **samba4-server + luci-app-samba4.** The fleet doesn't share
-    files over SMB.
+  * **samba4-server + luci-app-samba4.** No SMB use case for this
+    image.
   * **kmod-scsi-core + kmod-usb-storage.** No USB storage use case.
 
 And adds:
@@ -102,9 +103,10 @@ And adds:
   * **libmbim + mbim-utils**: pulled in by ModemManager and kept
     available for diagnostics (`mbimcli`, `mbim-proxy`).
   * **speedtest-go**, **wifi-dethrash-collector**.
-  * **telegraf-full** — *private variant only*, since it pushes
-    metrics to `metrics.bad.ass` which only exists inside the home
-    network. Toggled in `x3000/config.private`.
+  * **telegraf-full** — *private variant only*. Useful if you've got
+    a metrics endpoint to push to. Toggled in `x3000/config.private`;
+    the public variant explicitly unsets both `telegraf` and
+    `telegraf-full`.
   * **procps-ng-ps**: real `ps` replacing busybox's stub, swapped in
     via the OpenWrt alternatives system at `/bin/ps`.
 
@@ -139,28 +141,26 @@ And adds:
 
 ## Build
 
-The build supports two variants, selected by argument to `prepare.sh`
-(or `build.sh`, the one-shot driver):
+The build kit produces two variants, selected by argument to
+`prepare.sh` (or `build.sh`, the one-shot driver):
 
-  * **`private`** — image with builder-internal extras. Composes the
-    rootfs from `files-common/` + `files-private/`, where the latter
-    is a per-builder slot whose contents are gitignored so each
-    builder keeps their CA / feed-signing pubkey / internal config
-    out of the public repo (see `files-private/README.md`). Also
-    bakes in `telegraf-full` for metrics push.
-
-  * **`public`** — vanilla image suitable for anyone with the same
-    hardware (GL-X3000 + RM520N-GL). Same modem stack, same custom
-    packages (qfirehose, quectel-5g-tools, adb, LuCI bundle), no
+  * **`public`** — clean image suitable for anyone with the same
+    hardware. Hardware enablement, the custom packages above, no
     private overlay, no telegraf.
+
+  * **`private`** — same image plus your own per-builder rootfs
+    overlay at `x3000/files-private/`, plus `telegraf-full`.
+    `files-private/`'s contents are gitignored, so each builder's
+    private bits stay local and out of the public repo. See
+    "Adding your own private overlay" below.
 
 ```
 git clone https://github.com/vjt/openwrt-glinet-x3000.git
 cd openwrt-glinet-x3000
 
 # One-shot: prepare + make + relocate output to bin-x3000-<variant>/
-./x3000/build.sh private          # bad.ass fleet image
 ./x3000/build.sh public           # public image
+./x3000/build.sh private          # your-own-overlay image
 ./x3000/build.sh public -- V=s    # forward extra args to make
 
 # Or step-by-step (artifacts land in bin/ — overwritten on every build):
@@ -178,7 +178,7 @@ The active variant is recorded in `.x3000-variant`.
 After `build.sh` finishes the artifacts land under
 
 ```
-bin-x3000-<variant>/targets/mediatek/filogic/
+bin-x3000-<variant>/
 ├── openwrt-mediatek-filogic-glinet_gl-x3000-squashfs-sysupgrade.bin
 ├── openwrt-mediatek-filogic-glinet_gl-x3000-squashfs-factory.bin
 ├── openwrt-mediatek-filogic-glinet_gl-x3000.manifest
@@ -194,6 +194,44 @@ already running OpenWrt; use `factory.bin` only via stock recovery
 mode. The GL.iNet stock U-Boot rejects factory headers via the web
 UI — it expects a sysupgrade-style image even on the first flash —
 so plan accordingly.
+
+## Adding your own private overlay
+
+`x3000/files-private/` is a per-builder slot. Drop any files here that
+should ship in the rootfs of *your* private build but stay out of
+this public repo. Only `.gitkeep` is tracked; everything else is
+gitignored, so populating it doesn't pollute the upstream tree.
+
+Common contents:
+
+  * **Internal CA(s)** at
+    `usr/local/share/ca-certificates/<name>.crt`, with a uci-default
+    at `etc/uci-defaults/99-<name>-ca` that appends the cert to
+    `/etc/ssl/certs/ca-certificates.crt` on first boot. Sketch:
+
+    ```sh
+    #!/bin/sh
+    CERT=/usr/local/share/ca-certificates/<name>.crt
+    BUNDLE=/etc/ssl/certs/ca-certificates.crt
+    MARKER='# <name> internal CA'
+    [ -r "$CERT" ] || exit 0
+    grep -qF "$MARKER" "$BUNDLE" && exit 0
+    { echo; echo "$MARKER"; cat "$CERT"; } >> "$BUNDLE"
+    ```
+  * **Custom apk feed wiring**: the feed-signing public key at
+    `etc/apk/keys/<basename>.pem` (basename must match `--sign-key`
+    used by `apk mkndx` on your feed builder), and the feed URL in
+    `etc/apk/repositories.d/customfeeds.list`.
+  * **Telegraf config** at `etc/telegraf.conf` if you've enabled
+    `telegraf-full` via the `private` variant.
+  * Anything else infra-specific (ssh known_hosts, backup keys —
+    though private keys generally belong on a single device, not in
+    every image you build).
+
+The build composes `data-trunk/files/` from `x3000/files-common/`
++ `x3000/files-private/` (rsync, `.gitkeep` excluded), so the layout
+inside `files-private/` mirrors the rootfs path. Permissions are
+preserved — uci-defaults scripts must be `chmod +x`.
 
 ## On aarch64 build hosts
 
