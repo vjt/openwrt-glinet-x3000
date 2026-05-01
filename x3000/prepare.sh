@@ -51,9 +51,11 @@ ROOT="$(pwd)"
 DEPS="$ROOT/.build-deps"
 LOCAL="$ROOT/feeds-local"
 FEEDS_LIST="$ROOT/x3000/custom-feeds.txt"
+FEEDS_LIST_LOCAL="$ROOT/x3000/custom-feeds.$VARIANT.local"
 FEEDS_CONF_SRC="$ROOT/x3000/feeds.conf"
 CONFIG_COMMON="$ROOT/x3000/config.common"
 CONFIG_VARIANT="$ROOT/x3000/config.$VARIANT"
+CONFIG_VARIANT_LOCAL="$ROOT/x3000/config.$VARIANT.local"
 FILES_COMMON="$ROOT/x3000/files-common"
 FILES_VARIANT="$ROOT/x3000/files-$VARIANT"
 VARIANT_MARKER="$ROOT/.x3000-variant"
@@ -77,49 +79,63 @@ done
 
 echo "==> Refreshing custom package repos"
 
-while IFS= read -r raw_line; do
-    line="${raw_line%%#*}"
-    line="${line#"${line%%[![:space:]]*}"}"   # ltrim
-    line="${line%"${line##*[![:space:]]}"}"   # rtrim
-    [[ -z "$line" ]] && continue
+process_feed_list() {
+    local list="$1"
+    while IFS= read -r raw_line; do
+        line="${raw_line%%#*}"
+        line="${line#"${line%%[![:space:]]*}"}"   # ltrim
+        line="${line%"${line##*[![:space:]]}"}"   # rtrim
+        [[ -z "$line" ]] && continue
 
-    read -r name url ref subdir <<< "$line"
-    [[ -z "${subdir:-}" ]] && {
-        echo "malformed line in $FEEDS_LIST: $raw_line" >&2
-        exit 1
-    }
+        read -r name url ref subdir <<< "$line"
+        [[ -z "${subdir:-}" ]] && {
+            echo "malformed line in $list: $raw_line" >&2
+            exit 1
+        }
 
-    # Derive a stable directory name from the URL so multiple feeds backed
-    # by the same repo (e.g. android-tools + brotli, both inside
-    # openwrt-android-tools.git) share a single clone.
-    repo_basename="$(basename "${url%.git}")"
-    clone_dir="$DEPS/$repo_basename"
+        # Derive a stable directory name from the URL so multiple feeds backed
+        # by the same repo (e.g. android-tools + brotli, both inside
+        # openwrt-android-tools.git) share a single clone.
+        repo_basename="$(basename "${url%.git}")"
+        clone_dir="$DEPS/$repo_basename"
 
-    if [[ ! -d "$clone_dir/.git" ]]; then
-        echo "  cloning $url -> $clone_dir"
-        git clone "$url" "$clone_dir"
-    fi
+        if [[ ! -d "$clone_dir/.git" ]]; then
+            echo "  cloning $url -> $clone_dir"
+            git clone "$url" "$clone_dir"
+        fi
 
-    git -C "$clone_dir" fetch --quiet origin
-    git -C "$clone_dir" -c advice.detachedHead=false checkout --quiet "$ref"
-    # If $ref is a branch, fast-forward; if it's a SHA the pull is a no-op.
-    if git -C "$clone_dir" rev-parse --verify --quiet "refs/remotes/origin/$ref" >/dev/null; then
-        git -C "$clone_dir" reset --hard --quiet "origin/$ref"
-    fi
+        git -C "$clone_dir" fetch --quiet origin
+        git -C "$clone_dir" -c advice.detachedHead=false checkout --quiet "$ref"
+        # If $ref is a branch, fast-forward; if it's a SHA the pull is a no-op.
+        if git -C "$clone_dir" rev-parse --verify --quiet "refs/remotes/origin/$ref" >/dev/null; then
+            git -C "$clone_dir" reset --hard --quiet "origin/$ref"
+        fi
 
-    src_dir="$clone_dir/$subdir"
-    if [[ ! -d "$src_dir" ]]; then
-        echo "  $repo_basename has no subdir '$subdir' (looking for $src_dir)" >&2
-        exit 1
-    fi
+        src_dir="$clone_dir/$subdir"
+        if [[ ! -d "$src_dir" ]]; then
+            echo "  $repo_basename has no subdir '$subdir' (looking for $src_dir)" >&2
+            exit 1
+        fi
 
-    link="$LOCAL/$name"
-    if [[ -L "$link" || -e "$link" ]]; then
-        rm -f "$link"
-    fi
-    ln -s "$src_dir" "$link"
-    echo "  feeds-local/$name -> $src_dir"
-done < "$FEEDS_LIST"
+        link="$LOCAL/$name"
+        if [[ -L "$link" || -e "$link" ]]; then
+            rm -f "$link"
+        fi
+        ln -s "$src_dir" "$link"
+        echo "  feeds-local/$name -> $src_dir"
+    done < "$list"
+}
+
+process_feed_list "$FEEDS_LIST"
+
+# Per-builder additions: x3000/custom-feeds.<variant>.local is a gitignored
+# slot for repos that should only show up in your private builds (your
+# own forks, internal-only packages, …). Same line format as
+# custom-feeds.txt; absent file = no-op.
+if [[ -f "$FEEDS_LIST_LOCAL" ]]; then
+    echo "==> Refreshing local custom package repos ($FEEDS_LIST_LOCAL)"
+    process_feed_list "$FEEDS_LIST_LOCAL"
+fi
 
 # --- Drop the build-host feeds.conf in place ------------------------------
 
@@ -133,12 +149,21 @@ sed "s|^src-link custom feeds-local\$|src-link custom $LOCAL|" \
 
 # --- Compose .config from common + variant --------------------------------
 
-echo "==> Composing .config from config.common + config.$VARIANT"
+echo "==> Composing .config from config.common + config.$VARIANT$([ -f "$CONFIG_VARIANT_LOCAL" ] && echo " + config.$VARIANT.local")"
 {
     cat "$CONFIG_COMMON"
     echo
     echo "# --- variant: $VARIANT ---"
     cat "$CONFIG_VARIANT"
+    # Per-builder additions: x3000/config.<variant>.local is a gitignored
+    # slot for CONFIG_PACKAGE_… selections specific to your private build
+    # (e.g. private packages from custom-feeds.<variant>.local, or extra
+    # tooling you don't want in the public image).
+    if [[ -f "$CONFIG_VARIANT_LOCAL" ]]; then
+        echo
+        echo "# --- variant: $VARIANT.local ---"
+        cat "$CONFIG_VARIANT_LOCAL"
+    fi
 } > "$ROOT/.config"
 make defconfig FORCE=1 >/dev/null
 

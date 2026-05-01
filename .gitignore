@@ -30,6 +30,13 @@
 # survives in git; everything else is local-only.
 /x3000/files-private/*
 !/x3000/files-private/.gitkeep
+
+# Per-builder additions for the private build: extra package repos
+# (custom-feeds.private.local) and extra config knobs
+# (config.private.local). Both gitignored so each builder's private
+# package selection stays out of the public repo.
+/x3000/custom-feeds.*.local
+/x3000/config.*.local
 /*.patch
 /llvm-bpf*
 key-build*

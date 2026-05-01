@@ -197,10 +197,21 @@ so plan accordingly.
 
 ## Adding your own private overlay
 
-`x3000/files-private/` is a per-builder slot. Drop any files here that
-should ship in the rootfs of *your* private build but stay out of
-this public repo. Only `.gitkeep` is tracked; everything else is
-gitignored, so populating it doesn't pollute the upstream tree.
+The `private` variant has three per-builder slots, all gitignored,
+so populating them doesn't pollute the upstream tree:
+
+| Slot | Purpose |
+|---|---|
+| `x3000/files-private/` | rootfs files (CAs, configs, …) |
+| `x3000/custom-feeds.private.local` | extra package repos |
+| `x3000/config.private.local` | extra `CONFIG_PACKAGE_…` selections |
+
+### Rootfs files: `x3000/files-private/`
+
+Drop anything here that should ship inside the rootfs of your private
+build. Layout mirrors the device's rootfs path; permissions are
+preserved (uci-defaults scripts must be `chmod +x`). Only `.gitkeep`
+is tracked.
 
 Common contents:
 
@@ -224,14 +235,40 @@ Common contents:
     `etc/apk/repositories.d/customfeeds.list`.
   * **Telegraf config** at `etc/telegraf.conf` if you've enabled
     `telegraf-full` via the `private` variant.
-  * Anything else infra-specific (ssh known_hosts, backup keys —
-    though private keys generally belong on a single device, not in
-    every image you build).
+  * Anything else infra-specific.
 
-The build composes `data-trunk/files/` from `x3000/files-common/`
-+ `x3000/files-private/` (rsync, `.gitkeep` excluded), so the layout
-inside `files-private/` mirrors the rootfs path. Permissions are
-preserved — uci-defaults scripts must be `chmod +x`.
+### Baking your own packages
+
+The `public` build pulls extra packages from `x3000/custom-feeds.txt`
+(the four vjt forks listed there). For private builds you can layer
+your own on top via two gitignored files:
+
+`x3000/custom-feeds.private.local` — same line format as
+`custom-feeds.txt` (`<symlink-name> <git-url> <ref> <subdir>`), one
+per repo. `prepare.sh private` clones each, refreshes to `<ref>`, and
+symlinks the package subdir under `feeds-local/` alongside the public
+ones, so they're visible to OpenWrt's feeds machinery as if they'd
+always been there. Example:
+
+```
+# x3000/custom-feeds.private.local
+my-private-pkg  git@github.com:you/my-private-pkg.git  main  openwrt/my-private-pkg
+my-other-pkg    git@gitea.example/you/my-other.git    v1.2  openwrt
+```
+
+`x3000/config.private.local` — `CONFIG_PACKAGE_<name>=y` lines,
+appended to the composed `.config` after `config.private`. Anything
+you'd put in `config.private` if it weren't going into the public
+repo:
+
+```
+# x3000/config.private.local
+CONFIG_PACKAGE_my-private-pkg=y
+CONFIG_PACKAGE_my-other-pkg=y
+```
+
+Both files are absent in a fresh clone — the build silently no-ops
+the local-additions step if either doesn't exist.
 
 ## On aarch64 build hosts
 
@@ -273,11 +310,17 @@ x3000/
                         variant-specific BIN_DIR (bin-x3000-<variant>/).
 ├── feeds.conf          Verbatim copy installed at /feeds.conf
                         (with feeds-local/ rewritten to absolute path).
-├── custom-feeds.txt    Repo list driving prepare.sh.
+├── custom-feeds.txt    Tracked repo list driving prepare.sh.
+├── custom-feeds.private.local   *(optional, gitignored)* extra repos for
+                        your private build. Same line format as
+                        custom-feeds.txt.
 ├── config.common       Shared build-config overlay (target + the bulk of
                         package selections).
 ├── config.private      Private-only delta (telegraf-full, etc.).
 ├── config.public       Public-only delta (explicit unsets for telegraf).
+├── config.private.local *(optional, gitignored)* extra CONFIG_PACKAGE_…
+                        lines for your private build. Appended to .config
+                        after config.private.
 ├── files-common/       Rootfs overlay shipped in every variant.
 ├── files-private/      Rootfs overlay only in private. Per-builder slot:
                         only .gitkeep is tracked, all contents are
