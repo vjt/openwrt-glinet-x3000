@@ -115,3 +115,13 @@ CONFIG_PACKAGE_dnsmasq-full=y
 # Wireless - add full wpad for 802.11r
 # CONFIG_PACKAGE_wpad-basic-mbedtls is not set
 CONFIG_PACKAGE_wpad-mbedtls=y
+
+# `src-link custom feeds-local` in feeds.conf is a build-only symlink
+# feed (vjt forks pulled in by x3000/prepare.sh). Defconfig would set
+# CONFIG_FEED_custom=y, which makes the apk image step template
+# https://downloads.openwrt.org/releases/<v>/packages/<arch>/custom/packages.adb
+# into /etc/apk/repositories.d/distfeeds.list — a URL that does not
+# exist and breaks every `apk update` on the box. Pinning =m emits the
+# line commented-out, so apk silently ignores it but the build infra
+# still knows custom packages are selectable.
+CONFIG_FEED_custom=m
