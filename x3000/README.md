@@ -90,8 +90,9 @@ And adds:
     fixing the libusb claim bug for non-contiguous USB interface
     numbers — the RM520N publishes interfaces 0,1,2,3,5 and the
     upstream client iterates by array index).
-  * **qfirehose** (vjt fork pinned at 1.4.17; upstream 1.4.11 bricks
-    RM520N).
+  * **qfirehose** ([nippynetworks/qfirehose](https://github.com/nippynetworks/qfirehose)
+    1.4.17 packaged for OpenWrt; available on the device for one-off
+    modem firmware flashes, not used at runtime).
   * **quectel-5g-tools** (Lua AT helpers `5g-info`, `5g-monitor`,
     `5g-lock`, `modem-debug` reading `/dev/ttyUSB2`; the `5g-led-bars`
     procd daemon driving the panel signal LEDs from PCC/SCC NR-RSRP;

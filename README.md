@@ -8,16 +8,23 @@ with its **Quectel RM520N-GL 5G modem** running on the mainline
 `mhi_pci_generic` + `mhi_wwan_mbim` stack, with ModemManager owning the
 data plane.
 
-If you want to build that image, **read [`x3000/README.md`](x3000/README.md)**
-— it documents what's different from upstream, why each patch exists, the
-build prerequisites, and the post-flash modem configuration. The whole
-build comes down to:
+**Pre-built images** are on the
+[**releases page**](https://github.com/vjt/openwrt-glinet-x3000/releases)
+— grab the latest `jeeves-rN` and flash the
+`...-squashfs-sysupgrade.bin` (factory image is rejected by stock
+GL.iNet U-Boot; sysupgrade is the only path in).
+
+If you'd rather build the image yourself — including a private variant
+with your own internal CA, custom apk feed, or extra packages baked
+in — **read [`x3000/README.md`](x3000/README.md)**. It documents what's
+different from upstream, why each patch exists, the build prerequisites,
+the public/private variant split, and the post-flash modem configuration.
+The whole build comes down to:
 
 ```
 git clone https://github.com/vjt/openwrt-glinet-x3000.git
 cd openwrt-glinet-x3000
-./x3000/prepare.sh
-make -j$(nproc)
+./x3000/build.sh public          # or `private` with your own overlay
 ```
 
 The rest of this README is upstream OpenWrt's, kept verbatim for
