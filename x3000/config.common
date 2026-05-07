@@ -42,9 +42,19 @@ CONFIG_PACKAGE_mbim-utils=y
 # Hardware enumeration tools (lspci / lsusb) for diagnosing modem topology.
 CONFIG_PACKAGE_pciutils=y
 CONFIG_PACKAGE_usbutils=y
-# Storage tooling we don't want shipped.
-# CONFIG_PACKAGE_kmod-scsi-core is not set
-# CONFIG_PACKAGE_kmod-usb-storage is not set
+# microSD slot on the GL-X3000 is wired through an internal USB-SD
+# bridge (the SoC's only MSDC controller is committed to the rootfs
+# eMMC at mmc@11230000). So USB-storage + filesystems is all we need —
+# no DTS work. Stock GL.iNet shipped exactly this stack.
+CONFIG_PACKAGE_kmod-usb-storage=y
+CONFIG_PACKAGE_kmod-usb-storage-uas=y
+CONFIG_PACKAGE_kmod-fs-vfat=y
+CONFIG_PACKAGE_kmod-fs-ext4=y
+CONFIG_PACKAGE_kmod-fs-exfat=y
+CONFIG_PACKAGE_kmod-nls-cp437=y
+CONFIG_PACKAGE_kmod-nls-iso8859-1=y
+CONFIG_PACKAGE_kmod-nls-utf8=y
+CONFIG_PACKAGE_block-mount=y
 CONFIG_PACKAGE_kmod-tcp-bbr=y
 CONFIG_PACKAGE_libattr=y
 CONFIG_PACKAGE_libexpat=y
