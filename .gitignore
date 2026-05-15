@@ -23,6 +23,7 @@
 /.config-x3000
 /.x3000-variant
 /bin-x3000-*
+/x3000-build*.log
 
 # files-private/ is the per-builder slot for stuff that should ship in
 # the private rootfs but stay out of the public repo (internal CA,
