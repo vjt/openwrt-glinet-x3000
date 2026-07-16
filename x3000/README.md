@@ -354,7 +354,7 @@ attach, set it manually after first boot:
 
 ```sh
 uci set network.wwan.proto='modemmanager'
-uci set network.wwan.device="$(readlink -f /sys/class/wwan/wwan0mbim0/device/../..)"
+uci set network.wwan.device="$(readlink -f /sys/class/wwan/wwan0mbim0/device/../../..)"
 uci set network.wwan.apn='<your-apn>'
 uci set network.wwan.auth='none'
 uci set network.wwan.iptype='ipv4v6'
