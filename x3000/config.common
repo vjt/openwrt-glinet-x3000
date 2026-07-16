@@ -63,6 +63,12 @@ CONFIG_PACKAGE_dosfstools=y
 CONFIG_PACKAGE_exfat-fsck=y
 CONFIG_PACKAGE_exfat-mkfs=y
 CONFIG_PACKAGE_kmod-tcp-bbr=y
+# TUN/TAP driver for OpenVPN and other tun-based VPNs. Baked in because
+# kmods can't be apk-add-ed later on a custom SNAPSHOT build: the official
+# kmod feed is keyed to the exact kernel vermagic/hash, which our build
+# does not match. WireGuard tunnels use the in-kernel kmod-wireguard
+# (pulled in by the wireguard-tools userland when needed). (#3)
+CONFIG_PACKAGE_kmod-tun=y
 CONFIG_PACKAGE_libattr=y
 CONFIG_PACKAGE_libexpat=y
 CONFIG_PACKAGE_libffi=y
