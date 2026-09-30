@@ -465,3 +465,151 @@ feed_stage_custom_only() {
     feed_prune_custom "$stage"
     feed_reindex "$stage/custom" "$root"
 }
+
+# Clones gh-pages (depth 1) into dest and prints the commit it starts
+# from — publish leases on it — or nothing when the branch does not
+# exist yet (dest is then an empty repo with origin set).
+feed_clone_pages() {
+    local dest="$1" heads
+    heads="$(git ls-remote --heads "$FEED_GIT_URL" gh-pages)" || feed_die "cannot reach $FEED_GIT_URL"
+    if [[ -z "$heads" ]]; then
+        git init -q "$dest"
+        git -C "$dest" remote add origin "$FEED_GIT_URL"
+        return 0
+    fi
+    git clone -q --depth 1 --single-branch --branch gh-pages "$FEED_GIT_URL" "$dest" \
+        || feed_die "cannot clone gh-pages of $FEED_GIT_URL"
+    git -C "$dest" rev-parse HEAD
+}
+
+# Continuity guard: the published custom/ index must verify with our
+# local public key, or the key changed and every device would reject
+# what we are about to sign. Skipped only when custom/packages.adb is
+# not in the gh-pages git tree (nothing published yet) — never because
+# a fetch failed.
+feed_continuity_check() {
+    local clone="$1" root="$2" base="${3:-$FEED_BASE_URL}" listed tmp
+    if ! git -C "$clone" rev-parse -q --verify HEAD >/dev/null; then
+        feed_log "continuity: gh-pages does not exist yet, skipping"
+        return 0
+    fi
+    listed="$(git -C "$clone" ls-tree --name-only HEAD -- custom/packages.adb)"
+    if [[ -z "$listed" ]]; then
+        feed_log "continuity: nothing published under custom/ yet, skipping"
+        return 0
+    fi
+    tmp="$(feed_mktemp)"
+    curl -fsS --retry 3 -o "$tmp" "$base/custom/packages.adb" \
+        || feed_die "continuity: custom/packages.adb is in gh-pages but $base/custom/packages.adb cannot be fetched"
+    feed_verify_index "$tmp" "$root/public-key.pem"
+    rm -f "$tmp"
+    feed_log "continuity: the published custom/ index verifies with $root/public-key.pem"
+}
+
+# Commits the staged tree as a fresh orphan (history never accumulates;
+# unchanged blobs are not re-uploaded) and force-pushes gh-pages, leased
+# on the commit we cloned so a concurrent publish is refused. Prints the
+# pushed commit.
+feed_publish() {
+    local clone="$1" base="$2" msg="$3"
+    git -C "$clone" checkout -q --orphan feed-publish
+    git -C "$clone" add -A
+    git -C "$clone" commit -q -m "$msg"
+    git -C "$clone" push -q --force-with-lease="gh-pages:$base" origin HEAD:refs/heads/gh-pages \
+        || feed_die "push to $FEED_GIT_URL gh-pages failed (did someone publish meanwhile?)"
+    git -C "$clone" rev-parse HEAD
+}
+
+# Pages takes ~30 s from push to served; errored is fatal.
+feed_wait_pages_build() {
+    local commit="$1" deadline json built status
+    deadline=$((SECONDS + FEED_TIMEOUT))
+    while (( SECONDS < deadline )); do
+        if json="$(gh api "repos/$FEED_GH_REPO/pages/builds/latest" 2>/dev/null)"; then
+            built="$(jq -r '.commit // ""' <<< "$json")"
+            status="$(jq -r '.status // ""' <<< "$json")"
+            if [[ "$built" == "$commit" ]]; then
+                case "$status" in
+                    built)
+                        feed_log "Pages built $commit"
+                        return 0
+                        ;;
+                    errored)
+                        feed_die "Pages build of $commit errored: $(jq -r '.error.message // ""' <<< "$json")"
+                        ;;
+                esac
+            fi
+        fi
+        sleep "$FEED_POLL_INTERVAL"
+    done
+    feed_die "Pages did not build $commit within ${FEED_TIMEOUT}s"
+}
+
+# Polls base/<relpath> until it serves the bytes staged in stage/<relpath>.
+feed_wait_served() {
+    local base="$1" stage="$2" rel want got tmp deadline
+    shift 2
+    tmp="$(feed_mktemp)"
+    deadline=$((SECONDS + FEED_TIMEOUT))
+    for rel in "$@"; do
+        want="$(sha256sum < "$stage/$rel" | cut -d' ' -f1)"
+        while :; do
+            got=""
+            if curl -fsS -o "$tmp" "$base/$rel" 2>/dev/null; then
+                got="$(sha256sum < "$tmp" | cut -d' ' -f1)"
+            fi
+            if [[ "$got" == "$want" ]]; then
+                break
+            fi
+            (( SECONDS < deadline )) || feed_die "$base/$rel does not serve the published bytes after ${FEED_TIMEOUT}s"
+            sleep "$FEED_POLL_INTERVAL"
+        done
+        feed_log "served: $rel"
+    done
+    rm -f "$tmp"
+}
+
+# Serves dir on an ephemeral 127.0.0.1 port. Sets FEED_SERVE_PID and
+# FEED_SERVE_URL; the caller kills FEED_SERVE_PID. Call as a plain
+# statement: in $(…) the variables would be lost.
+feed_serve() {
+    local dir="$1" log port="" i
+    log="$(feed_mktemp)"
+    python3 -u -m http.server --bind 127.0.0.1 --directory "$dir" 0 > "$log" 2>&1 &
+    FEED_SERVE_PID=$!
+    for i in $(seq 100); do
+        port="$(sed -n 's/.* port \([0-9]*\) .*/\1/p' "$log")"
+        if [[ -n "$port" ]]; then
+            break
+        fi
+        sleep 0.1
+    done
+    [[ -n "$port" ]] || feed_die "local http server did not start: $(cat "$log")"
+    FEED_SERVE_URL="http://127.0.0.1:$port"
+}
+
+# Predicate: 0 if a GitHub release exists for the tag, 1 if not; dies
+# if GitHub cannot tell (never treat "unknown" as "absent").
+feed_release_exists() {
+    local out
+    if out="$(gh api "repos/$RELEASE_GH_REPO/releases/tags/$1" 2>&1)"; then
+        return 0
+    fi
+    if grep -q 'HTTP 404' <<< "$out"; then
+        return 1
+    fi
+    feed_die "cannot query release $1 on $RELEASE_GH_REPO: $out"
+}
+
+# A tag missing from TAGS becomes the newest one. That is only right for
+# a tag without a GitHub release yet: an already-released tag outside
+# TAGS predates the feed or fell out of retention.
+feed_check_new_tag() {
+    local stage="$1" tag="$2"
+    if [[ -f "$stage/TAGS" ]] && grep -qxF -- "$tag" "$stage/TAGS"; then
+        return 0
+    fi
+    if feed_release_exists "$tag"; then
+        feed_die "$tag is already released but not in the feed's TAGS: cut a new tag"
+    fi
+}

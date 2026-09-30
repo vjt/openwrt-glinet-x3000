@@ -163,3 +163,102 @@ quectel-5g-tools https://github.com/vjt/quectel-5g-tools.git master openwrt/quec
 brotli https://github.com/vjt/openwrt-android-tools.git master openwrt/brotli   # shares the clone
 EOF
 }
+
+# fx_www: one http server for $TEST_TMP/www (the fake Pages site under
+# feed/, the fake upstream feed under upstream/). Sets FX_URL.
+fx_www() {
+    mkdir -p "$TEST_TMP/www"
+    feed_serve "$TEST_TMP/www"
+    FX_PIDS+=("$FEED_SERVE_PID")
+    export FX_URL="$FEED_SERVE_URL"
+}
+
+# fx_pages_remote: a bare gh-pages remote whose post-receive hook
+# deploys the pushed tree into $TEST_TMP/www/feed — a local GitHub
+# Pages. Seeded like the real one after the spike. Needs fx_www.
+fx_pages_remote() {
+    local bare="$TEST_TMP/pages.git" seed="$TEST_TMP/pages-seed" site="$TEST_TMP/www/feed"
+    git init -q --bare "$bare"
+    cat > "$bare/hooks/post-receive" <<EOF
+#!/bin/sh
+rm -rf "$site" && mkdir -p "$site" && git --git-dir="$bare" archive gh-pages | tar -x -C "$site"
+EOF
+    chmod +x "$bare/hooks/post-receive"
+    mkdir -p "$seed/spike"
+    echo probe > "$seed/spike/x3000-feed-probe-1.0-r1.apk"
+    touch "$seed/.nojekyll"
+    git -C "$seed" init -q -b gh-pages
+    git -C "$seed" add -A
+    git -C "$seed" commit -q -m spike
+    git -C "$seed" push -q "$bare" gh-pages 2>/dev/null
+    export FX_PAGES_BARE="$bare" FEED_GIT_URL="file://$bare" FEED_BASE_URL="$FX_URL/feed"
+}
+
+fx_pages_sha() {
+    git --git-dir="$FX_PAGES_BARE" rev-parse gh-pages
+}
+
+# fx_gh_stub: a fake gh on PATH. The latest Pages build is the bare
+# remote's gh-pages commit (status $FX_PAGES_STATUS, default built);
+# releases live in $TEST_TMP/releases/<tag>/. Calls go to $TEST_TMP/gh.log.
+fx_gh_stub() {
+    mkdir -p "$TEST_TMP/stubbin" "$TEST_TMP/releases"
+    cat > "$TEST_TMP/stubbin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "gh $*" >> "$TEST_TMP/gh.log"
+rel="$TEST_TMP/releases"
+case "$1" in
+    api)
+        case "$2" in
+            */pages/builds/latest)
+                printf '{"status":"%s","commit":"%s","error":{"message":"fixture"}}\n' \
+                    "${FX_PAGES_STATUS:-built}" "$(git --git-dir="$FX_PAGES_BARE" rev-parse gh-pages)"
+                ;;
+            */releases/tags/*)
+                if [[ -d "$rel/${2##*/}" ]]; then
+                    echo '{}'
+                else
+                    echo 'gh: Not Found (HTTP 404)' >&2
+                    exit 1
+                fi
+                ;;
+            *) echo "fake gh: unhandled api $2" >&2; exit 1 ;;
+        esac
+        ;;
+    release)
+        sub="$2"; tag="$3"; shift 3
+        case "$sub" in
+            create|upload)
+                if [[ "$sub" == upload && ! -d "$rel/$tag" ]]; then
+                    echo "release not found" >&2
+                    exit 1
+                fi
+                mkdir -p "$rel/$tag"
+                for a in "$@"; do
+                    if [[ -f "$a" && "$a" == */bin-x3000-* ]]; then
+                        cp "$a" "$rel/$tag/"
+                    fi
+                done
+                ;;
+            download)
+                dest=.
+                while [[ $# -gt 0 ]]; do
+                    case "$1" in
+                        -D) dest="$2"; shift 2 ;;
+                        *) shift ;;
+                    esac
+                done
+                [[ -d "$rel/$tag" ]] || { echo "release not found" >&2; exit 1; }
+                mkdir -p "$dest"
+                cp "$rel/$tag"/* "$dest"/
+                ;;
+            *) echo "fake gh: unhandled release $sub" >&2; exit 1 ;;
+        esac
+        ;;
+    *) echo "fake gh: unhandled $*" >&2; exit 1 ;;
+esac
+EOF
+    chmod +x "$TEST_TMP/stubbin/gh"
+    export PATH="$TEST_TMP/stubbin:$PATH"
+}
