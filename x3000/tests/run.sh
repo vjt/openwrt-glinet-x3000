@@ -40,7 +40,20 @@ failed=()
 # Unquoted on purpose: the first argument is a glob.
 for file in "$TESTS_DIR"/$file_glob; do
     [[ -f "$file" ]] || continue
-    fns="$(bash -c "source '$file'; declare -F" | awk '$3 ~ /^test_/ { print $3 }' | grep -E -- "$fn_regex" || true)"
+    # A file that does not even load must fail the run, not vanish from
+    # it; a regex selecting nothing in a loadable file is fine.
+    load_rc=0
+    load_err="$(mktemp)"
+    declared="$(bash -c "source '$file' && declare -F" 2>"$load_err")" || load_rc=$?
+    if (( load_rc != 0 )); then
+        failed+=("$(basename "$file") (cannot load)")
+        echo "FAIL $(basename "$file") (cannot load)"
+        sed 's/^/    /' "$load_err"
+        rm -f "$load_err"
+        continue
+    fi
+    rm -f "$load_err"
+    fns="$(awk '$3 ~ /^test_/ { print $3 }' <<< "$declared" | grep -E -- "$fn_regex" || true)"
     for fn in $fns; do
         tmp="$(mktemp -d)"
         # A fresh bash per test: set -e is live in the test body, and a
@@ -62,6 +75,10 @@ for file in "$TESTS_DIR"/$file_glob; do
 done
 
 echo
+if (( pass + ${#failed[@]} == 0 )); then
+    echo "no tests matched"
+    exit 1
+fi
 echo "$pass passed, ${#failed[@]} failed"
 if (( ${#failed[@]} )); then
     printf '  %s\n' "${failed[@]}"
