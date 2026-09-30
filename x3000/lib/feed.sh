@@ -103,3 +103,21 @@ feed_custom_origins() {
         printf '.build-deps/%s/%s\n' "$(basename "${url%.git}")" "$subdir"
     done <<< "$entries" | sort -u
 }
+
+# Release builds must be signed with private-key.pem: every image we
+# ever shipped trusts its public half. Without it, package/Makefile
+# silently mints a new key, and the feed signed with that one is
+# UNTRUSTED on every device out there.
+feed_check_key() {
+    local root="$1" derived
+    if [[ ! -f "$root/private-key.pem" ]]; then
+        feed_die "$root/private-key.pem is missing: a release build would mint a new key that no shipped image trusts. Restore it:
+    gh repo clone $FEED_KEY_REPO /tmp/x3000-feed-key
+    cp /tmp/x3000-feed-key/private-key.pem /tmp/x3000-feed-key/public-key.pem '$root/'"
+    fi
+    [[ -f "$root/public-key.pem" ]] || feed_die "$root/public-key.pem is missing (restore it from $FEED_KEY_REPO)"
+    derived="$(openssl ec -in "$root/private-key.pem" -pubout 2>/dev/null)" \
+        || feed_die "$root/private-key.pem is not a readable EC private key"
+    [[ "$derived" == "$(cat "$root/public-key.pem")" ]] \
+        || feed_die "$root/public-key.pem does not derive from $root/private-key.pem"
+}

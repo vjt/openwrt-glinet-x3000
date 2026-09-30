@@ -11,7 +11,7 @@
 #            quectel-5g-tools, adb, LuCI bundle) but no internal CA,
 #            no internal feed key, no telegraf push.
 #
-# Usage:  x3000/prepare.sh [private|public]
+# Usage:  x3000/prepare.sh [private|public] [--release <tag>]
 #
 # What it does, idempotently:
 #   1. Clones the custom package repos listed in x3000/custom-feeds.txt
@@ -33,21 +33,41 @@
 #      every Makefile is symlinked into package/feeds/.
 #   8. Applies x3000/patches/*.patch against feed-side files (modemmanager
 #      tty hotplug etc.).
+#   9. Release mode only (--release <tag>, used by x3000/release.sh via
+#      build.sh): before anything else, refuses to run without the feed
+#      signing key (private-key.pem, which every shipped image trusts);
+#      then writes files/etc/apk/repositories.d/x3000feed.list pointing
+#      the image at the public apk feed for <tag>. See "Cutting a
+#      release" in x3000/README.md.
 
 set -euo pipefail
 
-VARIANT="${1:-private}"
-case "$VARIANT" in
-    private|public) ;;
-    *)
-        echo "usage: $0 [private|public]" >&2
-        echo "  unknown variant: $VARIANT" >&2
-        exit 2
-        ;;
-esac
+VARIANT="private"
+RELEASE_TAG=""
+
+usage() {
+    echo "usage: $0 [private|public] [--release <tag>]" >&2
+    exit 2
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        private|public) VARIANT="$1"; shift ;;
+        --release)
+            [[ $# -ge 2 ]] || usage
+            RELEASE_TAG="$2"
+            shift 2
+            ;;
+        *)
+            echo "  unknown argument: $1" >&2
+            usage
+            ;;
+    esac
+done
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
+source "$ROOT/x3000/lib/feed.sh"
 DEPS="$ROOT/.build-deps"
 LOCAL="$ROOT/feeds-local"
 FEEDS_LIST="$ROOT/x3000/custom-feeds.txt"
@@ -60,7 +80,14 @@ FILES_COMMON="$ROOT/x3000/files-common"
 FILES_VARIANT="$ROOT/x3000/files-$VARIANT"
 VARIANT_MARKER="$ROOT/.x3000-variant"
 
-echo "==> Preparing X3000 build tree (variant=$VARIANT)"
+if [[ -n "$RELEASE_TAG" ]]; then
+    feed_check_tag "$RELEASE_TAG"
+    # First thing, before any clone or config: without the key, make
+    # would mint a new one (package/Makefile) and sign the release with it.
+    feed_check_key "$ROOT"
+fi
+
+echo "==> Preparing X3000 build tree (variant=$VARIANT${RELEASE_TAG:+, release=$RELEASE_TAG})"
 
 mkdir -p "$DEPS" "$LOCAL"
 
@@ -80,18 +107,10 @@ done
 echo "==> Refreshing custom package repos"
 
 process_feed_list() {
-    local list="$1"
-    while IFS= read -r raw_line; do
-        line="${raw_line%%#*}"
-        line="${line#"${line%%[![:space:]]*}"}"   # ltrim
-        line="${line%"${line##*[![:space:]]}"}"   # rtrim
-        [[ -z "$line" ]] && continue
-
-        read -r name url ref subdir <<< "$line"
-        [[ -z "${subdir:-}" ]] && {
-            echo "malformed line in $list: $raw_line" >&2
-            exit 1
-        }
+    local list="$1" entries name url ref subdir repo_basename clone_dir src_dir link
+    entries="$(feed_list_entries "$list")"
+    while read -r name url ref subdir; do
+        [[ -z "$name" ]] && continue
 
         # Derive a stable directory name from the URL so multiple feeds backed
         # by the same repo (e.g. android-tools + brotli, both inside
@@ -123,7 +142,7 @@ process_feed_list() {
         fi
         ln -s "$src_dir" "$link"
         echo "  feeds-local/$name -> $src_dir"
-    done < "$list"
+    done <<< "$entries"
 }
 
 process_feed_list "$FEEDS_LIST"
@@ -178,6 +197,14 @@ mkdir -p "$ROOT/files"
 # (uci-defaults scripts must stay executable).
 rsync -a --exclude='.gitkeep' "$FILES_COMMON"/ "$ROOT/files/"
 rsync -a --exclude='.gitkeep' "$FILES_VARIANT"/ "$ROOT/files/"
+
+if [[ -n "$RELEASE_TAG" ]]; then
+    # A dedicated file, so users keep ownership of customfeeds.list and a
+    # private overlay's own feed list does not collide with it.
+    echo "==> Pointing the image at the public apk feed for $RELEASE_TAG"
+    mkdir -p "$ROOT/files/etc/apk/repositories.d"
+    feed_repo_list "$RELEASE_TAG" > "$ROOT/files/etc/apk/repositories.d/$FEED_LIST_NAME"
+fi
 
 # --- Record the variant ---------------------------------------------------
 
