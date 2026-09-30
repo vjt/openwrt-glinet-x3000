@@ -613,3 +613,60 @@ feed_check_new_tag() {
         feed_die "$tag is already released but not in the feed's TAGS: cut a new tag"
     fi
 }
+
+# apk add --simulate in a canary root: a non-zero rc or any UNTRUSTED
+# index (apk only warns, then carries on without it) is fatal; must,
+# when given, has to appear in the output.
+feed_canary_resolve() {
+    local root="$1" must="$2" out rc=0
+    shift 2
+    out="$(feed_apk --root "$root" --usermode add --simulate "$@" 2>&1)" || rc=$?
+    # initdb is what fetches the indexes (apk 3.0.5), so that is where an
+    # untrusted one is reported; add --simulate then only sees "no such
+    # package". Judge both outputs.
+    out="${FEED_CANARY_INIT_OUT:-}"$'\n'"$out"
+    if (( rc != 0 )) || grep -qi untrusted <<< "$out"; then
+        feed_die "canary: apk add --simulate $* failed (rc=$rc):"$'\n'"$out"
+    fi
+    if [[ -n "$must" ]] && ! grep -qF -- "$must" <<< "$out"; then
+        feed_die "canary: expected '$must' resolving $*:"$'\n'"$out"
+    fi
+    feed_log "canary: $* resolves"
+}
+
+# The #7 canary, from a scratch root that sees exactly what a device
+# running the image sees: its keys, its upstream feeds and our two feed
+# lines (rewritten to base when checking a staged tree on localhost).
+# kmod-wireguard + wireguard-tools must resolve with kernel = kver, and
+# every package in custom/ must resolve, which proves their
+# dependencies are satisfiable on this image.
+feed_canary() {
+    local bin="$1" base="$2" kver="$3" work unsq root names
+    local -a pkgs
+    work="$(feed_mktemp -d)"
+    feed_extract_rootfs "$bin" "$work/root.sqfs"
+    unsq="$(feed_hostbin unsquashfs4)"
+    "$unsq" -no-xattrs -d "$work/img" "$work/root.sqfs" etc/apk >/dev/null 2>&1 \
+        || feed_die "canary: cannot extract /etc/apk from $bin"
+    root="$work/root"
+    mkdir -p "$root/etc/apk"
+    cp -a "$work/img/etc/apk/arch" "$work/img/etc/apk/keys" "$work/img/etc/apk/repositories.d" "$root/etc/apk/" \
+        || feed_die "canary: the image's /etc/apk lacks arch, keys or repositories.d"
+    [[ -f "$root/etc/apk/repositories.d/$FEED_LIST_NAME" ]] || feed_die "canary: image has no $FEED_LIST_NAME"
+    if [[ "$base" != "$FEED_BASE_URL" ]]; then
+        sed -i "s|^$FEED_BASE_URL/|$base/|" "$root/etc/apk/repositories.d/$FEED_LIST_NAME"
+    fi
+    FEED_CANARY_INIT_OUT="$(feed_apk --root "$root" --usermode add --initdb 2>&1)" \
+        || feed_die "canary: cannot initialise $root:"$'\n'"$FEED_CANARY_INIT_OUT"
+
+    feed_canary_resolve "$root" "Installing kernel ($kver)" kmod-wireguard wireguard-tools
+
+    curl -fsS -o "$work/custom.adb" "$base/custom/packages.adb" \
+        || feed_die "canary: cannot fetch $base/custom/packages.adb"
+    names="$(feed_index_tsv "$work/custom.adb")"
+    names="$(cut -f1 <<< "$names" | sort -u)"
+    [[ -n "$names" ]] || feed_die "canary: $base/custom/packages.adb lists no package"
+    mapfile -t pkgs <<< "$names"
+    feed_canary_resolve "$root" "" "${pkgs[@]}"
+    rm -rf "$work"
+}

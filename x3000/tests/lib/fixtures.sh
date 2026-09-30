@@ -262,3 +262,16 @@ EOF
     chmod +x "$TEST_TMP/stubbin/gh"
     export PATH="$TEST_TMP/stubbin:$PATH"
 }
+
+# fx_upstream: a stand-in for the OpenWrt feeds an image lists in
+# distfeeds.list — libc and wireguard-tools (which needs kmod-wireguard,
+# like the real one) — signed by an "upstream" key the image trusts.
+# Needs fx_www. Exports what fx_build_outputs bakes into the image.
+fx_upstream() {
+    local dir="$TEST_TMP/www/upstream"
+    fx_key "$TEST_TMP/upstream-key"
+    fx_apk "$dir" libc 1.2.5-r5
+    fx_apk "$dir" wireguard-tools 1.0.20260223-r1 "kmod-wireguard libc"
+    feed_reindex "$dir" "$TEST_TMP/upstream-key"
+    export FX_UPSTREAM_URL="$FX_URL/upstream" FX_UPSTREAM_PUB="$TEST_TMP/upstream-key/public-key.pem"
+}
