@@ -25,7 +25,7 @@ test_canary_fails_on_kmods_signed_by_another_key() {
     setup_canary
     fx_key "$TEST_TMP/throwaway"
     feed_reindex "$FEEDDIR/kmods/t1" "$TEST_TMP/throwaway"
-    assert_fails "feed_canary '$IMAGE' '$FX_URL/feed' '$FX_KVER_DEFAULT'" "canary: apk add --simulate kmod-wireguard wireguard-tools failed"
+    assert_fails "feed_canary '$IMAGE' '$FX_URL/feed' '$FX_KVER_DEFAULT'" "canary: the image's feeds include an UNTRUSTED index (apk add --initdb)"
     assert_contains "$RUN_OUT" "UNTRUSTED"
 }
 

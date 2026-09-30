@@ -621,10 +621,6 @@ feed_canary_resolve() {
     local root="$1" must="$2" out rc=0
     shift 2
     out="$(feed_apk --root "$root" --usermode add --simulate "$@" 2>&1)" || rc=$?
-    # initdb is what fetches the indexes (apk 3.0.5), so that is where an
-    # untrusted one is reported; add --simulate then only sees "no such
-    # package". Judge both outputs.
-    out="${FEED_CANARY_INIT_OUT:-}"$'\n'"$out"
     if (( rc != 0 )) || grep -qi untrusted <<< "$out"; then
         feed_die "canary: apk add --simulate $* failed (rc=$rc):"$'\n'"$out"
     fi
@@ -641,7 +637,7 @@ feed_canary_resolve() {
 # every package in custom/ must resolve, which proves their
 # dependencies are satisfiable on this image.
 feed_canary() {
-    local bin="$1" base="$2" kver="$3" work unsq root names
+    local bin="$1" base="$2" kver="$3" work unsq root names init_out
     local -a pkgs
     work="$(feed_mktemp -d)"
     feed_extract_rootfs "$bin" "$work/root.sqfs"
@@ -656,8 +652,13 @@ feed_canary() {
     if [[ "$base" != "$FEED_BASE_URL" ]]; then
         sed -i "s|^$FEED_BASE_URL/|$base/|" "$root/etc/apk/repositories.d/$FEED_LIST_NAME"
     fi
-    FEED_CANARY_INIT_OUT="$(feed_apk --root "$root" --usermode add --initdb 2>&1)" \
-        || feed_die "canary: cannot initialise $root:"$'\n'"$FEED_CANARY_INIT_OUT"
+    # initdb is what fetches the indexes (apk 3.0.5), so an UNTRUSTED one
+    # is reported here; add --simulate later only says "no such package".
+    init_out="$(feed_apk --root "$root" --usermode add --initdb 2>&1)" \
+        || feed_die "canary: cannot initialise $root:"$'\n'"$init_out"
+    if grep -qi untrusted <<< "$init_out"; then
+        feed_die "canary: the image's feeds include an UNTRUSTED index (apk add --initdb):"$'\n'"$init_out"
+    fi
 
     feed_canary_resolve "$root" "Installing kernel ($kver)" kmod-wireguard wireguard-tools
 
