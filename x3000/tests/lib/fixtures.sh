@@ -55,3 +55,24 @@ STUB
     chmod +x "$TEST_TMP/stubbin/make"
     export PATH="$TEST_TMP/stubbin:$PATH"
 }
+
+# fx_apk OUTDIR NAME VERSION [DEPENDS] [ORIGIN]: an empty package with
+# the metadata the feed code reads. No files: nothing ever installs it.
+fx_apk() {
+    local out="$1" name="$2" ver="$3" deps="${4:-}" origin="${5:-feeds/base/fixture}"
+    local -a args=(--info "name:$name" --info "version:$ver" --info "arch:$FEED_ARCH" --info "origin:$origin")
+    if [[ -n "$deps" ]]; then
+        args+=(--info "depends:$deps")
+    fi
+    mkdir -p "$out"
+    "$FEED_HOST_BIN/apk" mkpkg "${args[@]}" --output "$out/$name-$ver.apk" >/dev/null
+}
+
+# fx_root DIR: a tree root with a signing key and a scripts/getver.sh
+# stub printing the revision an image built from it must carry.
+fx_root() {
+    fx_key "$1"
+    mkdir -p "$1/scripts"
+    printf '#!/bin/sh\necho r100-fixture0001\n' > "$1/scripts/getver.sh"
+    chmod +x "$1/scripts/getver.sh"
+}

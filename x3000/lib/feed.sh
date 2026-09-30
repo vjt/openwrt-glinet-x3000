@@ -121,3 +121,50 @@ feed_check_key() {
     [[ "$derived" == "$(cat "$root/public-key.pem")" ]] \
         || feed_die "$root/public-key.pem does not derive from $root/private-key.pem"
 }
+
+# "<name>\t<version>\t<origin>\t<depends, space-separated>" for one .apk.
+feed_pkg_tsv() {
+    local json
+    json="$(feed_apk adbdump --format json "$1")" || feed_die "cannot read package $1"
+    jq -r '.info | [.name, .version, (.origin // ""), ((.depends // []) | join(" "))] | @tsv' <<< "$json"
+}
+
+# The same fields, one line per package of an index (packages.adb).
+feed_index_tsv() {
+    local json
+    json="$(feed_apk adbdump --format json "$1")" || feed_die "cannot read index $1"
+    jq -r '.packages[]? | [.name, .version, (.origin // ""), ((.depends // []) | join(" "))] | @tsv' <<< "$json"
+}
+
+# Dies unless adb is signed by pubkey — the same trust decision a device
+# makes with only that key in /etc/apk/keys/.
+feed_verify_index() {
+    local adb="$1" pubkey="$2" keys out
+    keys="$(feed_mktemp -d)"
+    cp "$pubkey" "$keys/"
+    # --keys-dir must be absolute (mktemp's is): a relative one resolves
+    # under --root, and every signature then reads UNTRUSTED.
+    if ! out="$(feed_apk --keys-dir "$keys" verify "$adb" 2>&1)" || grep -qi untrusted <<< "$out"; then
+        rm -rf "$keys"
+        feed_die "$adb is not signed by $pubkey: $out"
+    fi
+    rm -rf "$keys"
+}
+
+# Signs dir/*.apk into dir/packages.adb with the tree key, using the
+# build system's own recipe (package/Makefile), then proves the result
+# verifies with the tree's public key.
+feed_reindex() {
+    local dir="$1" root="$2"
+    compgen -G "$dir/*.apk" >/dev/null || feed_die "no .apk in $dir to index"
+    rm -f "$dir/packages.adb"
+    ( cd "$dir" && feed_apk mkndx \
+          --root "$root" \
+          --keys-dir "$root" \
+          --allow-untrusted \
+          --sign "$root/private-key.pem" \
+          --output packages.adb \
+          ./*.apk >/dev/null ) \
+        || feed_die "apk mkndx failed in $dir"
+    feed_verify_index "$dir/packages.adb" "$root/public-key.pem"
+}
