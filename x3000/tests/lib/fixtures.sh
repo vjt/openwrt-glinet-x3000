@@ -152,3 +152,14 @@ fx_build_outputs() {
     echo fip > "$bin/$FEED_IMAGE_PREFIX-bl31-uboot.fip"
     echo "${FX_FEED_TAG:-$tag}" > "$bin/FEED_TAG"
 }
+
+# fx_feeds_txt FILE: a custom-feeds.txt whose origins are those of the
+# public packages fx_build_outputs builds (not secret-pkg's).
+fx_feeds_txt() {
+    cat > "$1" <<'EOF'
+# fixture custom feeds
+quectel-5g-tools https://github.com/vjt/quectel-5g-tools.git master openwrt/quectel-5g-tools
+
+brotli https://github.com/vjt/openwrt-android-tools.git master openwrt/brotli   # shares the clone
+EOF
+}

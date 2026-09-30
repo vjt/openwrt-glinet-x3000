@@ -289,3 +289,171 @@ feed_check_refresh() {
         feed_die "kmods/$tag/ is published for kernel $published, this build has $kver: kernel changed → cut a new tag"
     fi
 }
+
+# Published names are immutable: a file already in gh-pages keeps its
+# bytes, so a stale index cached anywhere between us and a device still
+# resolves to the bytes it hashed. A rebuild with an unchanged version is
+# therefore not republished: ship a change with a version bump.
+feed_stage_file() {
+    local src="$1" destdir="$2" name
+    name="$(basename "$src")"
+    if [[ -e "$destdir/$name" ]]; then
+        if ! cmp -s "$src" "$destdir/$name"; then
+            feed_log "kept published $name (same name, different bytes: bump the version to ship a change)"
+        fi
+        return 0
+    fi
+    cp "$src" "$destdir/$name"
+}
+
+# The .apk files in srcdir whose origin is a public custom feed (origins:
+# one per line, from feed_custom_origins). bin/packages/<arch>/custom/ is
+# shared with the private variant, so anything else — a package from
+# custom-feeds.private.local — is left out. A listed origin that produced
+# nothing means an incomplete build.
+feed_select_custom() {
+    local srcdir="$1" origins="$2" apk tsv origin seen=""
+    compgen -G "$srcdir/*.apk" >/dev/null || feed_die "no .apk in $srcdir"
+    for apk in "$srcdir"/*.apk; do
+        tsv="$(feed_pkg_tsv "$apk")"
+        origin="$(cut -f3 <<< "$tsv")"
+        if grep -qxF -- "$origin" <<< "$origins"; then
+            printf '%s\n' "$apk"
+            seen+="$origin"$'\n'
+        else
+            feed_log "excluded $(basename "$apk") (origin $origin is not in custom-feeds.txt)"
+        fi
+    done
+    while read -r origin; do
+        [[ -n "$origin" ]] || continue
+        if ! grep -qxF -- "$origin" <<< "$seen"; then
+            feed_die "no package built from $origin (listed in custom-feeds.txt)"
+        fi
+    done <<< "$origins"
+}
+
+feed_stage_kmods() {
+    local stage="$1" tag="$2" pkgdir="$3" f
+    mkdir -p "$stage/kmods/$tag"
+    for f in "$pkgdir"/kmod-*.apk "$pkgdir"/kernel-*.apk; do
+        feed_stage_file "$f" "$stage/kmods/$tag"
+    done
+}
+
+feed_stage_custom() {
+    local stage="$1" srcdir="$2" origins="$3" selected f
+    selected="$(feed_select_custom "$srcdir" "$origins")"
+    mkdir -p "$stage/custom"
+    while read -r f; do
+        [[ -n "$f" ]] || continue
+        feed_stage_file "$f" "$stage/custom"
+    done <<< "$selected"
+}
+
+# TAGS lists the published kmods tags, newest first. A tag not yet listed
+# becomes the newest; the newest FEED_KEEP_TAGS stay, and kmods/ dirs of
+# any other tag are dropped. Images older than the retained tags get a
+# 404 on kmods: a loud failure.
+feed_update_tags() {
+    local stage="$1" tag="$2" tags="" d
+    if [[ -f "$stage/TAGS" ]]; then
+        tags="$(cat "$stage/TAGS")"
+    fi
+    if ! grep -qxF -- "$tag" <<< "$tags"; then
+        tags="$tag"$'\n'"$tags"
+    fi
+    tags="$(awk -v keep="$FEED_KEEP_TAGS" 'NF && n < keep { print; n++ }' <<< "$tags")"
+    printf '%s\n' "$tags" > "$stage/TAGS"
+    for d in "$stage"/kmods/*/; do
+        [[ -d "$d" ]] || continue
+        d="$(basename "$d")"
+        if ! grep -qxF -- "$d" <<< "$tags"; then
+            feed_log "retention: dropping kmods/$d/"
+            rm -rf "${stage:?}/kmods/$d"
+        fi
+    done
+}
+
+# Versions on stdin, newest first on stdout, in apk's own ordering
+# (1.10.10 > 1.9.0, which a lexical sort gets backwards).
+feed_version_sort_desc() {
+    local -a sorted=()
+    local v i
+    while read -r v; do
+        [[ -n "$v" ]] || continue
+        i=0
+        while (( i < ${#sorted[@]} )) && [[ "$(feed_apk version -t "${sorted[i]}" "$v")" == ">" ]]; do
+            i=$((i + 1))
+        done
+        sorted=("${sorted[@]:0:i}" "$v" "${sorted[@]:i}")
+    done
+    if (( ${#sorted[@]} )); then
+        printf '%s\n' "${sorted[@]}"
+    fi
+}
+
+# Keeps the newest FEED_KEEP_VERSIONS versions of each custom package.
+feed_prune_custom() {
+    local dir="$1/custom" f tsv lines="" names name versions version n
+    for f in "$dir"/*.apk; do
+        [[ -e "$f" ]] || continue
+        tsv="$(feed_pkg_tsv "$f")"
+        lines+="$(cut -f1,2 <<< "$tsv")"$'\t'"$f"$'\n'
+    done
+    names="$(awk -F'\t' 'NF { print $1 }' <<< "$lines" | sort -u)"
+    while read -r name; do
+        [[ -n "$name" ]] || continue
+        versions="$(awk -F'\t' -v n="$name" '$1 == n { print $2 }' <<< "$lines" | feed_version_sort_desc)"
+        n=0
+        while read -r version; do
+            n=$((n + 1))
+            if (( n <= FEED_KEEP_VERSIONS )); then
+                continue
+            fi
+            f="$(awk -F'\t' -v n="$name" -v v="$version" '$1 == n && $2 == v { print $3 }' <<< "$lines")"
+            feed_log "retention: dropping custom/$(basename "$f")"
+            rm -f "$f"
+        done <<< "$versions"
+    done <<< "$names"
+}
+
+# gh-pages holds exactly the feed layout: anything else (the Pages spike's
+# spike/ and spike-bad/, strays) goes.
+feed_prune_unknown() {
+    local stage="$1" e name
+    for e in "$stage"/* "$stage"/.[!.]*; do
+        [[ -e "$e" ]] || continue
+        name="$(basename "$e")"
+        case "$name" in
+            .git|.nojekyll|TAGS|kmods|custom) ;;
+            *)
+                feed_log "removing $name from gh-pages (not part of the feed layout)"
+                rm -rf "$e"
+                ;;
+        esac
+    done
+}
+
+# Step 5 for a release: kmods/<tag>/ and custom/ over the current gh-pages
+# tree, retention applied, both indexes re-signed and verified.
+feed_stage_release() {
+    local stage="$1" tag="$2" pkgdir="$3" customsrc="$4" origins="$5" root="$6"
+    feed_prune_unknown "$stage"
+    touch "$stage/.nojekyll"
+    feed_stage_kmods "$stage" "$tag" "$pkgdir"
+    feed_update_tags "$stage" "$tag"
+    feed_stage_custom "$stage" "$customsrc" "$origins"
+    feed_prune_custom "$stage"
+    feed_reindex "$stage/kmods/$tag" "$root"
+    feed_reindex "$stage/custom" "$root"
+}
+
+# publish-feed.sh: custom/ only; kmods/ and TAGS stay as published.
+feed_stage_custom_only() {
+    local stage="$1" customsrc="$2" origins="$3" root="$4"
+    feed_prune_unknown "$stage"
+    touch "$stage/.nojekyll"
+    feed_stage_custom "$stage" "$customsrc" "$origins"
+    feed_prune_custom "$stage"
+    feed_reindex "$stage/custom" "$root"
+}
