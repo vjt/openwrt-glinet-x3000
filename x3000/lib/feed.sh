@@ -378,12 +378,20 @@ feed_update_tags() {
 # (1.10.10 > 1.9.0, which a lexical sort gets backwards).
 feed_version_sort_desc() {
     local -a sorted=()
-    local v i
+    local v i cmp
     while read -r v; do
         [[ -n "$v" ]] || continue
         i=0
-        while (( i < ${#sorted[@]} )) && [[ "$(feed_apk version -t "${sorted[i]}" "$v")" == ">" ]]; do
-            i=$((i + 1))
+        # The comparison runs in the body, not the while condition, where
+        # set -e is suspended: a failing apk must die, not misplace v and
+        # make feed_prune_custom delete the newest package.
+        while (( i < ${#sorted[@]} )); do
+            cmp="$(feed_apk version -t "${sorted[i]}" "$v")" || cmp=""
+            case "$cmp" in
+                '>') i=$((i + 1)) ;;
+                '<'|'=') break ;;
+                *) feed_die "cannot compare versions '${sorted[i]}' and '$v' (apk version -t said '$cmp')" ;;
+            esac
         done
         sorted=("${sorted[@]:0:i}" "$v" "${sorted[@]:i}")
     done

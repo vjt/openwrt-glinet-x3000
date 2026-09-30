@@ -134,3 +134,15 @@ test_stage_custom_only_leaves_kmods_alone() {
     assert_file "$S/custom/quectel-5g-tools-1.10.3-r1.apk"
     assert_ok "feed_verify_index '$S/custom/packages.adb' '$R/public-key.pem'"
 }
+
+test_version_sort_fails_closed_on_uncomparable_versions() {
+    # apk prints nothing and exits 1 for a version it cannot parse.
+    assert_fails "printf '1.0-r1\n<bad>\n' | feed_version_sort_desc" "cannot compare versions '1.0-r1' and '<bad>'"
+}
+
+test_version_sort_keeps_equal_versions() {
+    local got
+    got="$(printf '1.0-r1\n1.0-r1\n' | feed_version_sort_desc)"
+    assert_eq "$got" "1.0-r1
+1.0-r1"
+}
