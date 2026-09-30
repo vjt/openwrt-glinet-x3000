@@ -671,3 +671,68 @@ feed_canary() {
     feed_canary_resolve "$root" "" "${pkgs[@]}"
     rm -rf "$work"
 }
+
+# Tree guard: build from committed, pushed code. scripts/getver.sh
+# derives the image version from the upstream-tracking branch, so an
+# unpushed tree yields an image that lies about its version.
+feed_check_tree() {
+    local root="$1" strict="$2" problem="" head upstream
+    head="$(git -C "$root" rev-parse HEAD)"
+    upstream="$(git -C "$root" rev-parse -q --verify '@{upstream}' 2>/dev/null || true)"
+    if [[ -n "$(git -C "$root" status --porcelain --untracked-files=no)" ]]; then
+        problem="tracked files have uncommitted changes"
+    elif [[ "$head" != "$upstream" ]]; then
+        problem="HEAD is not pushed to its upstream branch (the image would report the wrong version)"
+    fi
+    if [[ -z "$problem" ]]; then
+        return 0
+    fi
+    if (( strict )); then
+        feed_die "$problem"
+    fi
+    feed_warn "$problem (dry run: continuing)"
+}
+
+# The release assets, all from bin-x3000-public/ and nowhere else.
+feed_release_files() {
+    printf '%s\n' \
+        "$1/$FEED_IMAGE_PREFIX-squashfs-sysupgrade.bin" \
+        "$1/$FEED_IMAGE_PREFIX.manifest" \
+        "$1/$FEED_IMAGE_PREFIX-preloader.bin" \
+        "$1/$FEED_IMAGE_PREFIX-bl31-uboot.fip" \
+        "$1/SHA256SUMS"
+}
+
+feed_write_sums() {
+    local bindir="$1"
+    ( cd "$bindir" && sha256sum \
+          "$FEED_IMAGE_PREFIX-squashfs-sysupgrade.bin" \
+          "$FEED_IMAGE_PREFIX-preloader.bin" \
+          "$FEED_IMAGE_PREFIX-bl31-uboot.fip" \
+          "$FEED_IMAGE_PREFIX.manifest" > SHA256SUMS ) \
+        || feed_die "cannot checksum the artifacts in $bindir"
+}
+
+# What `feed` verified, for `upload` to check: the commit the tag goes
+# on, and the hash of every asset.
+feed_write_record() {
+    local bindir="$1" tag="$2" commit="$3" files f
+    files="$(feed_release_files "$bindir")"
+    {
+        printf 'commit %s\n' "$commit"
+        while read -r f; do
+            ( cd "$bindir" && sha256sum "$(basename "$f")" )
+        done <<< "$files"
+    } > "$bindir/.release-$tag"
+}
+
+feed_check_record() {
+    local bindir="$1" tag="$2" record="$1/.release-$2" commit
+    [[ -f "$record" ]] || feed_die "no $record: run 'release.sh feed $tag' first (upload only ships what feed verified)"
+    commit="$(awk '$1 == "commit" { print $2 }' "$record")"
+    [[ -n "$commit" ]] || feed_die "$record has no commit line"
+    [[ "$(grep -vc '^commit ' "$record")" == 5 ]] || feed_die "$record does not list the 5 release assets"
+    ( cd "$bindir" && grep -v '^commit ' "$record" | sha256sum --check --strict --quiet ) \
+        || feed_die "artifacts in $bindir changed since 'release.sh feed $tag'"
+    printf '%s\n' "$commit"
+}

@@ -275,3 +275,22 @@ fx_upstream() {
     feed_reindex "$dir" "$TEST_TMP/upstream-key"
     export FX_UPSTREAM_URL="$FX_URL/upstream" FX_UPSTREAM_PUB="$TEST_TMP/upstream-key/public-key.pem"
 }
+
+# fx_tree DIR: fx_root plus a copy of the real x3000/ tooling with the
+# fixture custom-feeds.txt, committed and pushed to a bare upstream so
+# the tree guard passes.
+fx_tree() {
+    local dir="$1"
+    fx_root "$dir"
+    mkdir -p "$dir/x3000"
+    cp -a "$X3000_REAL_ROOT/x3000/." "$dir/x3000/"
+    rm -f "$dir/x3000"/*.local
+    fx_feeds_txt "$dir/x3000/custom-feeds.txt"
+    printf '%s\n' /bin/ '/bin-x3000-*/' /private-key.pem /public-key.pem > "$dir/.gitignore"
+    git -C "$dir" init -q -b main
+    git -C "$dir" add -A
+    git -C "$dir" commit -q -m fixture
+    git init -q --bare "$TEST_TMP/tree-upstream.git"
+    git -C "$dir" remote add origin "$TEST_TMP/tree-upstream.git"
+    git -C "$dir" push -q -u origin main 2>/dev/null
+}
