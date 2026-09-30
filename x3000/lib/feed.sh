@@ -168,3 +168,124 @@ feed_reindex() {
         || feed_die "apk mkndx failed in $dir"
     feed_verify_index "$dir/packages.adb" "$root/public-key.pem"
 }
+
+feed_sysupgrade_path() {
+    printf '%s/%s-squashfs-sysupgrade.bin\n' "$1" "$FEED_IMAGE_PREFIX"
+}
+
+feed_manifest_path() {
+    printf '%s/%s.manifest\n' "$1" "$FEED_IMAGE_PREFIX"
+}
+
+# The rootfs squashfs out of a sysupgrade tar.
+feed_extract_rootfs() {
+    local bin="$1" out="$2"
+    if ! tar -xOf "$bin" "$FEED_SYSUPGRADE_SUBDIR/root" > "$out" 2>/dev/null || [[ ! -s "$out" ]]; then
+        feed_die "$bin has no $FEED_SYSUPGRADE_SUBDIR/root"
+    fi
+}
+
+feed_rootfs_cat() {
+    local sqfs="$1" path="$2" unsq
+    unsq="$(feed_hostbin unsquashfs4)"
+    "$unsq" -cat "$sqfs" "$path" 2>/dev/null || feed_die "image has no /$path"
+}
+
+# Step 3, on the image itself rather than the files/ it was built from:
+# it comes from `build.sh --release <tag>`, points at the feed for <tag>,
+# trusts our key, is the public variant, and carries the version of the
+# tree it was built from.
+feed_check_artifact() {
+    local bindir="$1" tag="$2" root="$3"
+    local bin manifest sqfs got want meta rev want_rev fwtool
+    [[ -f "$bindir/FEED_TAG" ]] || feed_die "$bindir/FEED_TAG missing: $bindir was not built with --release"
+    got="$(cat "$bindir/FEED_TAG")"
+    [[ "$got" == "$tag" ]] || feed_die "$bindir/FEED_TAG says '$got', expected '$tag'"
+    bin="$(feed_sysupgrade_path "$bindir")"
+    manifest="$(feed_manifest_path "$bindir")"
+    [[ -f "$bin" ]] || feed_die "missing $bin"
+    [[ -f "$manifest" ]] || feed_die "missing $manifest"
+    # x3000/config.public strips telegraf; r2, r6 and r7 shipped the
+    # private image by mistake.
+    if grep -q '^telegraf' "$manifest"; then
+        feed_die "$manifest lists telegraf: this is the private variant"
+    fi
+
+    sqfs="$(feed_mktemp)"
+    feed_extract_rootfs "$bin" "$sqfs"
+    got="$(feed_rootfs_cat "$sqfs" "etc/apk/repositories.d/$FEED_LIST_NAME")"
+    want="$(feed_repo_list "$tag")"
+    [[ "$got" == "$want" ]] || feed_die "image $FEED_LIST_NAME does not point at tag $tag:"$'\n'"$got"
+    got="$(feed_rootfs_cat "$sqfs" etc/apk/keys/public-key.pem)"
+    want="$(cat "$root/public-key.pem")"
+    [[ "$got" == "$want" ]] || feed_die "image does not trust $root/public-key.pem"
+
+    # scripts/getver.sh names the base the upstream-tracking branch has:
+    # built before a push, an image reports the previous base
+    # (jeeves/HANDOFF-x3000-rebuild.md). Both the sysupgrade metadata and
+    # base-files' /etc/openwrt_release must name this tree.
+    want_rev="$(cd "$root" && ./scripts/getver.sh)"
+    fwtool="$(feed_hostbin fwtool)"
+    meta="$(feed_mktemp)"
+    "$fwtool" -q -i "$meta" "$bin" 2>/dev/null \
+        || feed_die "$bin has no fwtool metadata (was staging_dir/host/bin/fwtool missing at build time?)"
+    rev="$(jq -r '.version.revision // ""' "$meta")"
+    [[ "$rev" == "$want_rev" ]] || feed_die "image revision '$rev' is not this tree's '$want_rev'"
+    got="$(feed_rootfs_cat "$sqfs" etc/openwrt_release)"
+    grep -qxF "DISTRIB_REVISION='$want_rev'" <<< "$got" \
+        || feed_die "image /etc/openwrt_release is not revision $want_rev (stale base-files?):"$'\n'"$got"
+    rm -f "$sqfs" "$meta"
+}
+
+feed_manifest_kernel() {
+    local manifest="$1" kver
+    [[ -f "$manifest" ]] || feed_die "missing manifest $manifest"
+    kver="$(awk '$1 == "kernel" && $2 == "-" { print $3 }' "$manifest")"
+    if [[ -z "$kver" || "$kver" == *$'\n'* ]]; then
+        feed_die "$manifest: expected exactly one 'kernel - <version>' line"
+    fi
+    printf '%s\n' "$kver"
+}
+
+# Step 4: pkgdir holds one kernel package, for kver, and every kmod in it
+# depends on exactly kernel=kver. Outputs are clean in release mode, so a
+# mismatch is a real problem: stop, never filter.
+feed_check_kmods() {
+    local pkgdir="$1" kver="$2" work tsv kernels bad
+    compgen -G "$pkgdir/kmod-*.apk" >/dev/null || feed_die "no kmod-*.apk in $pkgdir (is CONFIG_ALL_KMODS=y in effect?)"
+    compgen -G "$pkgdir/kernel-*.apk" >/dev/null || feed_die "no kernel-*.apk in $pkgdir"
+    work="$(feed_mktemp -d)"
+    ( cd "$pkgdir" && feed_apk mkndx --allow-untrusted --output "$work/check.adb" kmod-*.apk kernel-*.apk >/dev/null ) \
+        || feed_die "cannot index the kmods in $pkgdir"
+    tsv="$(feed_index_tsv "$work/check.adb")"
+    rm -rf "$work"
+    kernels="$(awk -F'\t' '$1 == "kernel" { print $2 }' <<< "$tsv")"
+    [[ "$kernels" == "$kver" ]] || feed_die "$pkgdir holds kernel package(s) '$kernels', manifest says '$kver'"
+    bad="$(awk -F'\t' -v want="kernel=$kver" '
+        $1 ~ /^kmod-/ {
+            n = split($4, d, " "); ok = 0; foreign = 0
+            for (i = 1; i <= n; i++) {
+                if (d[i] == want) ok = 1
+                else if (d[i] ~ /^kernel[=<>~]/) foreign = 1
+            }
+            if (!ok || foreign) print "  " $1 "-" $2 " (depends: " $4 ")"
+        }' <<< "$tsv")"
+    [[ -z "$bad" ]] || feed_die "kmods not built for kernel=$kver:"$'\n'"$bad"
+}
+
+# The kernel version kmods/<tag>/ is published for, or nothing.
+feed_published_kernel() {
+    local adb="$1/kmods/$2/packages.adb" tsv
+    [[ -f "$adb" ]] || return 0
+    tsv="$(feed_index_tsv "$adb")"
+    awk -F'\t' '$1 == "kernel" { print $2 }' <<< "$tsv"
+}
+
+# Refresh guard: a tag's kmods are for one kernel, forever.
+feed_check_refresh() {
+    local stage="$1" tag="$2" kver="$3" published
+    published="$(feed_published_kernel "$stage" "$tag")"
+    if [[ -n "$published" && "$published" != "$kver" ]]; then
+        feed_die "kmods/$tag/ is published for kernel $published, this build has $kver: kernel changed → cut a new tag"
+    fi
+}
