@@ -36,9 +36,11 @@
 #   9. Release mode only (--release <tag>, used by x3000/release.sh via
 #      build.sh): before anything else, refuses to run without the feed
 #      signing key (private-key.pem, which every shipped image trusts);
-#      then writes files/etc/apk/repositories.d/x3000feed.list pointing
-#      the image at the public apk feed for <tag>. See "Cutting a
-#      release" in x3000/README.md.
+#      then (public) refuses the gitignored *.public.local overlays, which
+#      the pushed commit does not contain; then writes
+#      files/etc/apk/repositories.d/x3000feed.list pointing the image at
+#      the public apk feed for <tag>. See "Cutting a release" in
+#      x3000/README.md.
 
 set -euo pipefail
 shopt -s inherit_errexit
@@ -86,6 +88,9 @@ if [[ -n "$RELEASE_TAG" ]]; then
     # First thing, before any clone or config: without the key, make
     # would mint a new one (package/Makefile) and sign the release with it.
     feed_check_key "$ROOT"
+    if [[ "$VARIANT" == public ]]; then
+        feed_check_public_overlays "$ROOT"
+    fi
 fi
 
 echo "==> Preparing X3000 build tree (variant=$VARIANT${RELEASE_TAG:+, release=$RELEASE_TAG})"

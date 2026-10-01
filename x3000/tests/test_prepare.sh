@@ -64,3 +64,39 @@ test_prepare_release_needs_a_tag() {
     assert_eq "$RC" 2 "$OUT"
     assert_contains "$OUT" "usage:"
 }
+
+test_prepare_public_release_refuses_gitignored_overlays() {
+    # A public release build must not read gitignored per-builder files:
+    # the release record names a commit that does not contain them.
+    local f
+    for f in config.public.local custom-feeds.public.local; do
+        fx_prepare_tree "$TEST_TMP/tree"
+        fx_key "$TEST_TMP/tree"
+        mkdir -p "$TEST_TMP/tree/files"
+        touch "$TEST_TMP/tree/files/sentinel"
+        echo "# local" > "$TEST_TMP/tree/x3000/$f"
+        run_prepare public --release jeeves-r9
+        assert_eq "$RC" 1 "$OUT"
+        assert_contains "$OUT" "x3000/$f"
+        assert_file "$TEST_TMP/tree/files/sentinel"
+        assert_no_file "$TEST_TMP/tree/.config"
+        rm -rf "$TEST_TMP/tree"
+    done
+}
+
+test_prepare_public_default_mode_reads_the_overlays() {
+    fx_prepare_tree "$TEST_TMP/tree"
+    echo "CONFIG_PACKAGE_foo=y" > "$TEST_TMP/tree/x3000/config.public.local"
+    run_prepare public
+    assert_eq "$RC" 0 "$OUT"
+    assert_contains "$(cat "$TEST_TMP/tree/.config")" "CONFIG_PACKAGE_foo=y"
+}
+
+test_prepare_private_release_keeps_its_local_overlays() {
+    fx_prepare_tree "$TEST_TMP/tree"
+    fx_key "$TEST_TMP/tree"
+    echo "CONFIG_PACKAGE_foo=y" > "$TEST_TMP/tree/x3000/config.private.local"
+    run_prepare private --release jeeves-r9
+    assert_eq "$RC" 0 "$OUT"
+    assert_contains "$(cat "$TEST_TMP/tree/.config")" "CONFIG_PACKAGE_foo=y"
+}

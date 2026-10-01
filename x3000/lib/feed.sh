@@ -122,6 +122,18 @@ feed_check_key() {
         || feed_die "$root/public-key.pem does not derive from $root/private-key.pem"
 }
 
+# A public release build must be reproducible from the pushed commit, but
+# prepare.sh also reads these gitignored per-builder files for the public
+# variant. Called by prepare.sh before it touches anything; coreutils only.
+feed_check_public_overlays() {
+    local root="$1" f
+    for f in x3000/config.public.local x3000/custom-feeds.public.local; do
+        if [[ -e "$root/$f" ]]; then
+            feed_die "$root/$f would change the public release image but is not in the pushed commit: move it away for the release build"
+        fi
+    done
+}
+
 # "<name>\t<version>\t<origin>\t<depends, space-separated>" for one .apk.
 feed_pkg_tsv() {
     local json
@@ -676,11 +688,16 @@ feed_canary() {
 # derives the image version from the upstream-tracking branch, so an
 # unpushed tree yields an image that lies about its version.
 feed_check_tree() {
-    local root="$1" strict="$2" problem="" head upstream
+    local root="$1" strict="$2" problem="" head upstream dirty
     head="$(git -C "$root" rev-parse HEAD)"
     upstream="$(git -C "$root" rev-parse -q --verify '@{upstream}' 2>/dev/null || true)"
-    if [[ -n "$(git -C "$root" status --porcelain --untracked-files=no)" ]]; then
-        problem="tracked files have uncommitted changes"
+    # Untracked files count: prepare.sh applies an untracked patch or
+    # overlay file all the same, and the release record would name a
+    # commit that lacks it. A plain statement, so a git failure is not
+    # read as "clean".
+    dirty="$(git -C "$root" status --porcelain)"
+    if [[ -n "$dirty" ]]; then
+        problem="tracked files have uncommitted changes or the tree has untracked files"
     elif [[ "$head" != "$upstream" ]]; then
         problem="HEAD is not pushed to its upstream branch (the image would report the wrong version)"
     fi

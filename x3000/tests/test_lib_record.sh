@@ -15,7 +15,24 @@ test_tree_dirty_only_warns_in_dry_run() {
     fx_tree "$TEST_TMP/tree"
     echo "# edit" >> "$TEST_TMP/tree/x3000/custom-feeds.txt"
     assert_ok "feed_check_tree '$TEST_TMP/tree' 0"
-    assert_contains "$RUN_OUT" "WARNING: tracked files have uncommitted changes"
+    assert_contains "$RUN_OUT" "WARNING: tracked files have uncommitted changes or the tree has untracked files"
+}
+
+test_tree_untracked_file_is_fatal_when_strict() {
+    # prepare.sh applies an untracked patch / overlay file, so the release
+    # record's commit would not contain what is in the image.
+    fx_tree "$TEST_TMP/tree"
+    echo x > "$TEST_TMP/tree/x3000/patches-extra.patch"
+    assert_fails "feed_check_tree '$TEST_TMP/tree' 1" "untracked"
+}
+
+test_tree_untracked_file_only_warns_in_dry_run() {
+    fx_tree "$TEST_TMP/tree"
+    mkdir -p "$TEST_TMP/tree/x3000/files-common/etc"
+    echo x > "$TEST_TMP/tree/x3000/files-common/etc/new"
+    assert_ok "feed_check_tree '$TEST_TMP/tree' 0"
+    assert_contains "$RUN_OUT" "WARNING: "
+    assert_contains "$RUN_OUT" "untracked"
 }
 
 test_tree_unpushed_is_fatal_when_strict() {
