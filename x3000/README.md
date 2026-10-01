@@ -376,7 +376,14 @@ kernel.
 
 To ship a custom package fix without a release, bump its version and
 run `x3000/publish-feed.sh custom` (`--dry-run` to stop before
-publishing).
+publishing). It works on the newest tag in the feed's `TAGS` and needs
+that tag's GitHub release to exist.
+
+If `feed` fails after it published (step 6/7: the Pages wait or the live
+canary), re-run `x3000/release.sh feed <tag>`: it takes the refresh path
+(same kernel, immutable names) and only re-packs. `publish-feed.sh`
+rebuilds public too, so a `feed` whose `upload` is still pending must be
+re-run before uploading.
 
 The tooling has hermetic tests: `x3000/tests/run.sh`.
 

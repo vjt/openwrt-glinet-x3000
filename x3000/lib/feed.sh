@@ -5,9 +5,11 @@
 # "Cutting a release" in x3000/README.md has the workflow.
 #
 # Everything here fails closed: a helper that cannot prove its check
-# passed calls feed_die. Callers run with `set -euo pipefail` and call
-# these functions as plain statements (set -e is suspended inside
-# conditions, and in every function they call).
+# passed calls feed_die. Callers run with `set -euo pipefail` and
+# `shopt -s inherit_errexit` (without it a feed_die inside a nested
+# command substitution only ends that subshell), and call these
+# functions as plain statements (set -e is suspended inside conditions,
+# and in every function they call).
 
 FEED_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
