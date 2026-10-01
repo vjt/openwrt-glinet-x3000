@@ -73,3 +73,12 @@ test_apk_runs_the_host_apk() {
     got="$(feed_apk --version)"
     assert_contains "$got" "apk-tools 3."
 }
+
+test_custom_origins_dies_through_command_substitution() {
+    # Without inherit_errexit the die in the nested $(feed_list_entries)
+    # only left its subshell, and the earlier lines' origins came out
+    # with rc 0.
+    printf '%s\n' 'good https://example.org/good.git main pkg' 'bad-line-without-subdir' > "$TEST_TMP/bad-feeds.txt"
+    assert_fails 'o="$(feed_custom_origins '"$TEST_TMP/bad-feeds.txt"')"; echo "continued: $o"' "malformed line"
+    assert_not_contains "$RUN_OUT" continued
+}

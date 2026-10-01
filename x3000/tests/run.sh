@@ -16,6 +16,7 @@
 #   x3000/tests/run.sh test_release.sh dry   # matching functions
 
 set -euo pipefail
+shopt -s inherit_errexit
 
 TESTS_DIR="$(cd "$(dirname "$0")" && pwd)"
 X3000_REAL_ROOT="$(cd "$TESTS_DIR/../.." && pwd)"
@@ -58,7 +59,7 @@ for file in "$TESTS_DIR"/$file_glob; do
         tmp="$(mktemp -d)"
         # A fresh bash per test: set -e is live in the test body, and a
         # feed_die inside it ends that test only.
-        if out="$(cd "$tmp" && TEST_TMP="$tmp" bash -euo pipefail -c "
+        if out="$(cd "$tmp" && TEST_TMP="$tmp" bash -O inherit_errexit -euo pipefail -c "
                 source '$TESTS_DIR/lib/assert.sh'
                 source '$TESTS_DIR/lib/fixtures.sh'
                 source '$file'

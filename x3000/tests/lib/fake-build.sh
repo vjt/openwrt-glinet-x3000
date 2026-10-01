@@ -4,6 +4,7 @@
 # (X3000_BUILD_CMD points here): same arguments, same outputs in
 # miniature, driven by the FX_* knobs fx_build_outputs reads.
 set -euo pipefail
+shopt -s inherit_errexit
 if [[ $# -ne 3 || "$1" != public || "$2" != --release ]]; then
     echo "fake-build: unexpected arguments: $*" >&2
     exit 2

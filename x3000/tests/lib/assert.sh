@@ -34,13 +34,13 @@ assert_no_file() {
 # a condition. Exported variables reach it; fixture functions do not.
 assert_ok() {
     local rc=0
-    RUN_OUT="$(bash -euo pipefail -c "source '$FEED_LIB'; $1" 2>&1)" || rc=$?
+    RUN_OUT="$(bash -O inherit_errexit -euo pipefail -c "source '$FEED_LIB'; $1" 2>&1)" || rc=$?
     (( rc == 0 )) || fail "expected success (rc=$rc) from: $1"$'\n'"$RUN_OUT"
 }
 
 assert_fails() {
     local rc=0
-    RUN_OUT="$(bash -euo pipefail -c "source '$FEED_LIB'; $1" 2>&1)" || rc=$?
+    RUN_OUT="$(bash -O inherit_errexit -euo pipefail -c "source '$FEED_LIB'; $1" 2>&1)" || rc=$?
     (( rc != 0 )) || fail "expected failure from: $1"$'\n'"$RUN_OUT"
     assert_contains "$RUN_OUT" "$2"
 }

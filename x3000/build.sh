@@ -31,6 +31,7 @@
 # feed, and the build signs with its own auto-generated key.
 
 set -euo pipefail
+shopt -s inherit_errexit
 
 VARIANT="private"
 RELEASE_TAG=""

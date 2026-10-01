@@ -41,6 +41,7 @@
 #      release" in x3000/README.md.
 
 set -euo pipefail
+shopt -s inherit_errexit
 
 VARIANT="private"
 RELEASE_TAG=""

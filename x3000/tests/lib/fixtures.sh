@@ -206,6 +206,7 @@ fx_gh_stub() {
     cat > "$TEST_TMP/stubbin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+shopt -s inherit_errexit
 echo "gh $*" >> "$TEST_TMP/gh.log"
 rel="$TEST_TMP/releases"
 case "$1" in

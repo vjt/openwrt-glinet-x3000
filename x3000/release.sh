@@ -33,6 +33,7 @@
 # Every check lives in x3000/lib/feed.sh and fails closed.
 
 set -euo pipefail
+shopt -s inherit_errexit
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
