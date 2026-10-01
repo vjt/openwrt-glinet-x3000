@@ -1,0 +1,40 @@
+From: Marcello Barnaba <vjt@openssl.it>
+Subject: modemmanager: tty hotplug honours /etc/modemmanager/ignore-tty
+
+OpenWrt builds ModemManager without udev (-Dudev=false in the
+modemmanager Makefile), so port discovery is driven entirely by these
+hotplug.d shell scripts. There is no equivalent of udev's
+ID_MM_DEVICE_IGNORE blacklist, which means MM grabs every tty it sees
+on bring-up.
+
+On the Quectel RM520N-GL that includes /dev/ttyUSB0..3 (DIAG, NMEA, AT,
+AT2). The quectel-5g-tools userspace (5g-info, 5g-monitor, 5g-lock,
+5g-led-bars) needs the AT port for its own queries — so we short
+circuit the hotplug script when DEVNAME matches an entry in
+/etc/modemmanager/ignore-tty. MM keeps managing the MHI control
+surface (/dev/wwan0at0, /dev/wwan0mbim0), which is plenty for the
+data plane.
+
+The patch is applied by x3000/prepare.sh after `./scripts/feeds
+install -a`. Stored as a unified diff (rather than as a files/ overlay)
+so that an upstream change to 25-modemmanager-tty makes prepare.sh
+fail loudly instead of silently overlaying stale logic.
+
+--- a/feeds/packages/net/modemmanager/files/etc/hotplug.d/tty/25-modemmanager-tty
++++ b/feeds/packages/net/modemmanager/files/etc/hotplug.d/tty/25-modemmanager-tty
+@@ -8,6 +8,15 @@
+ # We require a device name
+ [ -n "$DEVNAME" ] || exit
+
++# Skip ports listed in /etc/modemmanager/ignore-tty (shipped by
++# quectel-5g-tools — see openwrt-glinet-x3000 fork). They are owned by
++# other userspace and MM must never open them. OpenWrt builds MM
++# without udev so ID_MM_DEVICE_IGNORE is unavailable; this short
++# circuit is the equivalent.
++[ -f /etc/modemmanager/ignore-tty ] \
++    && grep -qFx "$DEVNAME" /etc/modemmanager/ignore-tty 2>/dev/null \
++    && exit 0
++
+ # Always make sure the rundir exists
+ mkdir -m 0755 -p "${MODEMMANAGER_RUNDIR}"
+
