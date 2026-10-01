@@ -131,3 +131,20 @@ test_refresh_unpublished_tag_ok() {
     mkdir -p "$TEST_TMP/stage"
     assert_ok "feed_check_refresh '$TEST_TMP/stage' t1 '$FX_KVER_DEFAULT'"
 }
+
+test_refresh_index_without_kernel_package_refused() {
+    # A published index that names no kernel must not pass the guard
+    # vacuously: the tag's kernel could then change under its kmods.
+    fx_root "$TEST_TMP/root"
+    fx_apk "$TEST_TMP/stage/kmods/t1" kmod-tun 6.12.103-r1 "kernel=$FX_KVER_DEFAULT"
+    feed_reindex "$TEST_TMP/stage/kmods/t1" "$TEST_TMP/root"
+    assert_fails "feed_check_refresh '$TEST_TMP/stage' t1 '$FX_KVER_DEFAULT'" "kmods/t1/packages.adb lists no kernel package"
+}
+
+test_refresh_index_with_two_kernel_packages_refused() {
+    fx_root "$TEST_TMP/root"
+    publish_kernel "$TEST_TMP/stage" t1 "$FX_KVER_DEFAULT"
+    fx_apk "$TEST_TMP/stage/kmods/t1" kernel '6.12.104~aa-r1' libc
+    feed_reindex "$TEST_TMP/stage/kmods/t1" "$TEST_TMP/root"
+    assert_fails "feed_check_refresh '$TEST_TMP/stage' t1 '$FX_KVER_DEFAULT'" "kmods/t1/packages.adb lists several kernel packages"
+}

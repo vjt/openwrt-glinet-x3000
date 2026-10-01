@@ -297,6 +297,15 @@ feed_published_kernel() {
 feed_check_refresh() {
     local stage="$1" tag="$2" kver="$3" published
     published="$(feed_published_kernel "$stage" "$tag")"
+    # A published index that names no kernel (or several) proves nothing:
+    # passing would let a changed kernel be published under these kmods.
+    if [[ -f "$stage/kmods/$tag/packages.adb" ]]; then
+        if [[ -z "$published" ]]; then
+            feed_die "kmods/$tag/packages.adb lists no kernel package: cannot check the refresh"
+        elif [[ "$published" == *$'\n'* ]]; then
+            feed_die "kmods/$tag/packages.adb lists several kernel packages: cannot check the refresh"
+        fi
+    fi
     if [[ -n "$published" && "$published" != "$kver" ]]; then
         feed_die "kmods/$tag/ is published for kernel $published, this build has $kver: kernel changed → cut a new tag"
     fi
