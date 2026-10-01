@@ -1,0 +1,45 @@
+#!/bin/sh
+#
+# Cellular uplink on the built-in RM520N-GL: a ModemManager `wwan`
+# interface on the modem's PCI device, in the `wan` firewall zone.
+#
+# No APN: MM connects with an empty one and the network assigns its
+# default. Set network.wwan.apn if your carrier needs a specific one.
+#
+# uci-defaults run on the first boot of every new image, including
+# sysupgrades that keep settings, so existing config wins: an existing
+# `wwan` (it is also the usual name for a WiFi client uplink) is left
+# as it is, and so is a `wwan` already listed in any firewall zone.
+
+. /lib/functions.sh
+
+MODEM=/sys/devices/platform/soc/11280000.pcie/pci0000:00/0000:00:00.0/0000:01:00.0
+
+uci -q get network.wwan >/dev/null || {
+	uci batch <<-EOF
+		set network.wwan=interface
+		set network.wwan.proto='modemmanager'
+		set network.wwan.device='$MODEM'
+		set network.wwan.iptype='ipv4v6'
+	EOF
+	uci commit network
+}
+
+wwan_zoned=
+wan_zone=
+find_zones() {
+	local name networks
+	config_get name "$1" name
+	config_get networks "$1" network
+	list_contains networks wwan && wwan_zoned=1
+	[ "$name" = wan ] && [ -z "$wan_zone" ] && wan_zone="$1"
+}
+config_load firewall
+config_foreach find_zones zone
+
+[ -z "$wwan_zoned" ] && [ -n "$wan_zone" ] && {
+	uci add_list firewall."$wan_zone".network='wwan'
+	uci commit firewall
+}
+
+exit 0

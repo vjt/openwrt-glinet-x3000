@@ -1,0 +1,9 @@
+# Private (bad.ass fleet) variant — composed on top of x3000/config.common
+# by prepare.sh. Adds anything that only makes sense inside the bad.ass
+# network: metrics push to metrics.bad.ass, etc.
+
+# Telegraf full variant — every input plugin compiled in so the bad.ass
+# telegraf.conf (inputs.dns_query etc.) doesn't blow up the parser. Pushes
+# metrics to metrics.bad.ass, which only works inside the home network,
+# so this is private-only.
+CONFIG_PACKAGE_telegraf-full=y
