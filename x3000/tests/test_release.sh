@@ -83,6 +83,16 @@ test_feed_refuses_dirty_tree() {
     assert_stops_before_publish "uncommitted changes" feed t1
 }
 
+test_feed_refuses_a_build_that_built_nothing() {
+    # An earlier run's outputs (FEED_TAG == tag) must not satisfy step 3
+    # when this run's build produced nothing.
+    rel_setup
+    run_release feed --dry-run t1
+    assert_eq "$RC" 0 "$OUT"
+    export X3000_BUILD_CMD=true
+    assert_stops_before_publish "was not built with --release" feed t1
+}
+
 test_feed_refuses_missing_key() {
     rel_setup
     rm "$T/private-key.pem"

@@ -80,6 +80,9 @@ cmd_feed() {
     feed_check_new_tag "$WORK/pages" "$tag"
 
     feed_log "2/7 build public --release $tag"
+    # A build that builds nothing must not pass step 3 on an earlier run's
+    # outputs: FEED_TAG is written by this build or not at all.
+    rm -f "$PUBLIC_BIN/FEED_TAG"
     # Unquoted on purpose: X3000_BUILD_CMD may carry a docker exec prefix.
     $X3000_BUILD_CMD public --release "$tag"
 
