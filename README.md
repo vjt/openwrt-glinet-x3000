@@ -1,5 +1,37 @@
 ![OpenWrt logo](include/logo.png)
 
+# This is a fork of OpenWrt
+
+This branch (`openwrt-25.12`) carries the patches and build configuration
+needed to produce a working image for the **GL.iNet GL-X3000 (Spitz AX)**
+with its **Quectel RM520N-GL 5G modem** running on the mainline
+`mhi_pci_generic` + `mhi_wwan_mbim` stack, with ModemManager owning the
+data plane.
+
+**Pre-built images** are on the
+[**releases page**](https://github.com/vjt/openwrt-glinet-x3000/releases)
+— grab the latest `jeeves-rN` and flash the
+`...-squashfs-sysupgrade.bin` (factory image is rejected by stock
+GL.iNet U-Boot; sysupgrade is the only path in).
+
+If you'd rather build the image yourself — including a private variant
+with your own internal CA, custom apk feed, or extra packages baked
+in — **read [`x3000/README.md`](x3000/README.md)**. It documents what's
+different from upstream, why each patch exists, the build prerequisites,
+the public/private variant split, and the post-flash modem configuration.
+The whole build comes down to:
+
+```
+git clone https://github.com/vjt/openwrt-glinet-x3000.git
+cd openwrt-glinet-x3000
+./x3000/build.sh public          # or `private` with your own overlay
+```
+
+The rest of this README is upstream OpenWrt's, kept verbatim for
+reference.
+
+---
+
 OpenWrt Project is a Linux operating system targeting embedded devices. Instead
 of trying to create a single, static firmware, OpenWrt provides a fully
 writable filesystem with package management. This frees you from the

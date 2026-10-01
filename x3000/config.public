@@ -1,0 +1,10 @@
+# Public (no bad.ass extras) variant — composed on top of
+# x3000/config.common by prepare.sh. Strips anything that only makes
+# sense inside the bad.ass network so outsiders flashing this image
+# don't end up with our CA, our feed-signing key, or a telegraf trying
+# to reach metrics.bad.ass.
+
+# Telegraf is private-only — explicit unset to override any defconfig
+# pull-in by transitive deps.
+# CONFIG_PACKAGE_telegraf is not set
+# CONFIG_PACKAGE_telegraf-full is not set
