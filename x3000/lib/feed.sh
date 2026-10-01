@@ -736,3 +736,21 @@ feed_check_record() {
         || feed_die "artifacts in $bindir changed since 'release.sh feed $tag'"
     printf '%s\n' "$commit"
 }
+# Downloads the released image and manifest for tag, checked against the
+# release's own SHA256SUMS: devices run the released image, not a fresh
+# build, so that is what publish-feed.sh's canary uses.
+feed_fetch_release() {
+    local tag="$1" dest="$2" f
+    mkdir -p "$dest"
+    gh release download "$tag" -R "$RELEASE_GH_REPO" -D "$dest" \
+            -p "$FEED_IMAGE_PREFIX-squashfs-sysupgrade.bin" \
+            -p "$FEED_IMAGE_PREFIX.manifest" \
+            -p SHA256SUMS >/dev/null 2>&1 \
+        || feed_die "cannot download release $tag from $RELEASE_GH_REPO"
+    for f in "$FEED_IMAGE_PREFIX-squashfs-sysupgrade.bin" "$FEED_IMAGE_PREFIX.manifest"; do
+        [[ -f "$dest/$f" ]] || feed_die "release $tag has no $f"
+        grep -q "  $f\$" "$dest/SHA256SUMS" || feed_die "release $tag's SHA256SUMS does not list $f"
+    done
+    ( cd "$dest" && sha256sum --check --ignore-missing --quiet SHA256SUMS ) >/dev/null 2>&1 \
+        || feed_die "release $tag assets do not match its SHA256SUMS"
+}
