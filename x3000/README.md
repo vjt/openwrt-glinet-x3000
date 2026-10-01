@@ -59,26 +59,27 @@ helpers alongside ModemManager:
 
 ## What's different from a stock OpenWrt 25.12 build
 
-Commits on top of upstream `openwrt-25.12`:
+Six commits on top of upstream `openwrt-25.12`:
 
   * `mhi_pci_generic: claim Quectel RM520N-GL with Qualcomm subvendor IDs`
+    (fix 1 above)
   * `mediatek: glinet gl-x3000: disable PCIe runtime PM via pcie_port_pm=off`
-  * `x3000: persistent build configuration` (the build-prep machinery
-    + variant split under `x3000/`)
-  * `swap modem stack from umbim+watchdog to ModemManager`
-  * `patch curl to disable brotli autodetect`
+    (fix 2)
+  * `x3000: patch MM's tty hotplug to honour /etc/modemmanager/ignore-tty`
+    (fix 3) and `x3000: patch curl to build --without-brotli` (fix 4):
+    each adds one patch file under `x3000/patches/`, so they cherry-pick
+    on their own
+  * `x3000: build tooling, image variants and package selection` —
+    everything under `x3000/` that prepares and builds the image, and
+    applies those patches
+  * `x3000: public apk feed and release.sh (#7)` — the signed kmods +
+    custom packages feed and the release tooling (see "Installing
+    kernel modules and our packages")
 
-Plus the build-prep machinery under `x3000/` (incl. patches to feed
-files applied at the end of `prepare.sh`).
+The build config leaves out the LuCI attended-sysupgrade app: its
+server builds from upstream and would drop everything listed here.
 
-The build config drops a few things that upstream's GL-X3000 device
-recipe pulls in:
-
-  * **samba4-server + luci-app-samba4.** No SMB use case for this
-    image.
-  * **kmod-scsi-core + kmod-usb-storage.** No USB storage use case.
-
-And adds:
+It adds:
 
   * **ModemManager + libmm-glib + dbus + luci-proto-modemmanager.**
     MM owns the data plane: connect/reconnect, PIN unlock, signal
@@ -110,6 +111,19 @@ And adds:
     `telegraf-full`.
   * **procps-ng-ps**: real `ps` replacing busybox's stub, swapped in
     via the OpenWrt alternatives system at `/bin/ps`.
+  * **microSD support**: `kmod-usb-storage(-uas)`, vfat/ext4/exfat and
+    `block-mount`, plus `fdisk`, `e2fsprogs`, `dosfstools` and the exfat
+    tools. The slot sits behind an internal USB-SD bridge, so no DTS
+    work is needed.
+  * **kmod-tun** (OpenVPN and other tun-based VPNs work out of the box)
+    and **kmod-tcp-bbr**.
+  * Admin and diagnostics tools: `htop`, `vim-full`, `tcpdump`,
+    `strace`, `rsync`, `tmux`, `iperf3`, `iftop`, `bind-dig`,
+    `ip-full`, `ethtool`, `curl`; `dnsmasq-full`; full `wpad`; the
+    Prometheus node exporter with its netstat/openwrt/wifi collectors.
+  * **Every other kernel module, built but not installed**
+    (`CONFIG_ALL_KMODS=y`), so the feed carries the full set for this
+    kernel.
 
 ## Hardware
 
@@ -175,6 +189,11 @@ it will refresh the clones, refresh the symlinks under `feeds-local/`,
 recompose `.config` from `x3000/config.common + x3000/config.<variant>`,
 and recompose `files/` from `x3000/files-common/ + x3000/files-<variant>/`.
 The active variant is recorded in `.x3000-variant`.
+
+`--release <tag>` (e.g. `./x3000/build.sh public --release jeeves-r9`)
+is the maintainers' release mode: it needs the feed signing key, wipes
+the output dirs before building and points the image at our apk feed.
+You don't need it for your own builds — see "Cutting a release" below.
 
 After `build.sh` finishes the artifacts land under
 
@@ -299,6 +318,89 @@ android-tools https://github.com/vjt/openwrt-android-tools.git f24c199 openwrt/a
 Then `./x3000/prepare.sh` will fetch the repos and check out exactly
 those SHAs.
 
+## Installing kernel modules and our packages
+
+Kernel modules only load into the kernel they were built for, and every
+`kmod-*` package depends on that exact kernel
+(`kernel=<version>~<vermagic>`). Upstream's kmods are built with
+upstream's kernel config, not ours, so they never match. Our release
+images (from `jeeves-r9` on) therefore point at our own signed apk feed,
+<https://vjt.github.io/x3000-feed/>, in
+`/etc/apk/repositories.d/x3000feed.list`:
+
+    https://vjt.github.io/x3000-feed/kmods/<tag>/packages.adb
+    https://vjt.github.io/x3000-feed/custom/packages.adb
+
+- `kmods/<tag>/` holds every kmod built for that release's kernel.
+- `custom/` holds the packages from `x3000/custom-feeds.txt` (adb,
+  brotli, qfirehose, quectel-5g-tools, wifi-dethrash-collector), so
+  they can be upgraded without reflashing.
+
+On a router running a release image:
+
+    apk update
+    apk add kmod-wireguard wireguard-tools
+
+The feed keeps the kmods of the three newest releases. On an older
+release `apk update` gets a 404 for the kmods index: upgrade the image
+first.
+
+An image you build yourself without `--release` does not point at this
+feed, and it is signed with your own build key, so it could not use it
+anyway.
+
+## Cutting a release (maintainers)
+
+Releases go through `x3000/release.sh` and nothing else — never a
+hand-run `gh release`. It needs, on the host:
+
+  * the feed signing key `private-key.pem` (+ `public-key.pem`) at the
+    tree root — every image we ever shipped trusts it; the backup lives
+    in the private repo `vjt/x3000-feed-key`;
+  * `gh` logged in with push access to `vjt/x3000-feed`;
+  * `git`, `jq`, `curl`, `python3`, and a tree that has been built once
+    (for `staging_dir/host/bin`).
+
+The build itself goes through `$X3000_BUILD_CMD` (default
+`x3000/build.sh`); point it at your build container if you use one.
+
+1. Update and push the tree. The image's version string comes from the
+   pushed state (`scripts/getver.sh`), so release.sh refuses an
+   unpushed or dirty tree:
+
+       git fetch origin && git rebase origin/openwrt-25.12
+       git push --force-with-lease fork openwrt-25.12
+
+2. `x3000/release.sh feed <tag>` — builds public in release mode,
+   checks the image itself, stages the feed, resolves
+   `kmod-wireguard wireguard-tools` plus every custom package against
+   it as the image would (on localhost), publishes it, waits for Pages
+   and resolves everything again against the live feed. `--dry-run`
+   stops before publishing.
+3. Test the image. (For jeeves: `x3000/build.sh private --release <tag>`
+   and flash.)
+4. `x3000/release.sh upload <tag> --title "<title>" --notes-file <notes.md>`
+   — re-checks the artifacts against what `feed` verified, re-runs the
+   canary against the live feed, and uploads from `bin-x3000-public/`.
+   For an existing tag it replaces the assets instead.
+
+A kernel change (new kernel version or kernel config) needs a new tag:
+`feed` refuses to refresh a tag whose kmods were published for another
+kernel.
+
+To ship a custom package fix without a release, bump its version and
+run `x3000/publish-feed.sh custom` (`--dry-run` to stop before
+publishing). It works on the newest tag in the feed's `TAGS` and needs
+that tag's GitHub release to exist.
+
+If `feed` fails after it published (step 6/7: the Pages wait or the live
+canary), re-run `x3000/release.sh feed <tag>`: it takes the refresh path
+(same kernel, immutable names) and only re-packs. `publish-feed.sh`
+rebuilds public too, so a `feed` whose `upload` is still pending must be
+re-run before uploading.
+
+The tooling has hermetic tests: `x3000/tests/run.sh`.
+
 ## Layout
 
 ```
@@ -308,7 +410,16 @@ x3000/
                         composes .config and files/ from common + variant
                         sources, applies x3000/patches/ with `-F 0`.
 ├── build.sh            One-shot driver: prepare.sh + make with a
-                        variant-specific BIN_DIR (bin-x3000-<variant>/).
+                        variant-specific BIN_DIR (bin-x3000-<variant>/);
+                        --release <tag> for release builds.
+├── release.sh          The only way to cut a release: publishes and
+                        verifies the apk feed, then uploads the image
+                        (see "Cutting a release").
+├── publish-feed.sh     Refreshes custom/ on the apk feed without a
+                        release.
+├── lib/feed.sh         Every feed check, shared by the scripts above
+                        and prepare.sh.
+├── tests/              Hermetic tests for all of it (tests/run.sh).
 ├── feeds.conf          Verbatim copy installed at /feeds.conf
                         (with feeds-local/ rewritten to absolute path).
 ├── custom-feeds.txt    Tracked repo list driving prepare.sh.
