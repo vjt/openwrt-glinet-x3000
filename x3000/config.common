@@ -1,0 +1,149 @@
+# Target system - GL.INET X3000 (Spitz AX)
+CONFIG_TARGET_mediatek=y
+CONFIG_TARGET_mediatek_filogic=y
+CONFIG_TARGET_mediatek_filogic_DEVICE_glinet_gl-x3000=y
+# Custom packages baked into the image (rest pulled from local feed post-flash)
+CONFIG_PACKAGE_adb=y
+CONFIG_PACKAGE_qfirehose=y
+CONFIG_PACKAGE_quectel-5g-tools=y
+CONFIG_PACKAGE_wifi-dethrash-collector=y
+# Use Go pre-installed in Dockerfile.trunk; the in-tree golang-bootstrap
+# can't compile on linux/arm64 hosts.
+CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT="/usr/local/go"
+# CONFIG_GOLANG_BUILD_BOOTSTRAP is not set
+# Speedtest-go binary (Go-based) for on-device speed checks.
+CONFIG_PACKAGE_speedtest-go=y
+# Modem stack: ModemManager driving MBIM over PCIe MHI (mainline
+# mhi_pci_generic + mhi_wwan_mbim). MM owns the data plane (connect,
+# reconnect on carrier-side disconnect, RAT change, signal monitoring,
+# PIN unlock); netifd's `proto modemmanager` is the bridge.
+#
+# We tell MM to ignore /dev/ttyUSB[0-3] via /etc/modemmanager/ignore-tty
+# (consumed by a patched 25-modemmanager-tty hotplug script — see
+# x3000/prepare.sh) so quectel-5g-tools keeps owning the AT port for our
+# 5g-info / 5g-monitor / 5g-lock / 5g-led-bars helpers. MM drives the
+# MHI control surface (/dev/wwan0at0, /dev/wwan0mbim0) which is plenty.
+CONFIG_PACKAGE_kmod-mhi-bus=y
+CONFIG_PACKAGE_kmod-mhi-net=y
+CONFIG_PACKAGE_kmod-mhi-pci-generic=y
+CONFIG_PACKAGE_kmod-mhi-wwan-ctrl=y
+CONFIG_PACKAGE_kmod-mhi-wwan-mbim=y
+CONFIG_PACKAGE_kmod-usb-net-cdc-mbim=y
+CONFIG_PACKAGE_kmod-wwan=y
+CONFIG_PACKAGE_modemmanager=y
+CONFIG_PACKAGE_dbus=y
+CONFIG_PACKAGE_glib2=y
+CONFIG_PACKAGE_luci-proto-modemmanager=y
+# MM auto-pulls libmbim+libqmi via deps; keep these enabled so the proxy
+# binary + mbimcli are available for diagnostics and so libmbim ABI is
+# present for libmm-glib clients.
+CONFIG_PACKAGE_libmbim=y
+CONFIG_PACKAGE_mbim-utils=y
+# Hardware enumeration tools (lspci / lsusb) for diagnosing modem topology.
+CONFIG_PACKAGE_pciutils=y
+CONFIG_PACKAGE_usbutils=y
+# microSD slot on the GL-X3000 is wired through an internal USB-SD
+# bridge (the SoC's only MSDC controller is committed to the rootfs
+# eMMC at mmc@11230000). So USB-storage + filesystems is all we need —
+# no DTS work. Stock GL.iNet shipped exactly this stack.
+CONFIG_PACKAGE_kmod-usb-storage=y
+CONFIG_PACKAGE_kmod-usb-storage-uas=y
+CONFIG_PACKAGE_kmod-fs-vfat=y
+CONFIG_PACKAGE_kmod-fs-ext4=y
+CONFIG_PACKAGE_kmod-fs-exfat=y
+CONFIG_PACKAGE_kmod-nls-cp437=y
+CONFIG_PACKAGE_kmod-nls-iso8859-1=y
+CONFIG_PACKAGE_kmod-nls-utf8=y
+CONFIG_PACKAGE_block-mount=y
+# Userspace tools for partitioning + mkfs on the microSD slot. Without
+# these you can only mount filesystems that another machine prepared.
+CONFIG_PACKAGE_fdisk=y
+CONFIG_PACKAGE_e2fsprogs=y
+CONFIG_PACKAGE_dosfstools=y
+CONFIG_PACKAGE_exfat-fsck=y
+CONFIG_PACKAGE_exfat-mkfs=y
+CONFIG_PACKAGE_kmod-tcp-bbr=y
+# TUN/TAP driver for OpenVPN and other tun-based VPNs. Baked in because
+# kmods can't be apk-add-ed later on a custom SNAPSHOT build: the official
+# kmod feed is keyed to the exact kernel vermagic/hash, which our build
+# does not match. WireGuard tunnels use the in-kernel kmod-wireguard
+# (pulled in by the wireguard-tools userland when needed). (#3)
+CONFIG_PACKAGE_kmod-tun=y
+CONFIG_PACKAGE_libattr=y
+CONFIG_PACKAGE_libexpat=y
+CONFIG_PACKAGE_libffi=y
+CONFIG_PACKAGE_libiwinfo=y
+CONFIG_PACKAGE_libiwinfo-data=y
+CONFIG_PACKAGE_liblucihttp=y
+CONFIG_PACKAGE_liblucihttp-ucode=y
+CONFIG_PACKAGE_libpcre2=y
+# LuCI core
+CONFIG_PACKAGE_cgi-io=y
+CONFIG_PACKAGE_luci-app-firewall=y
+CONFIG_PACKAGE_luci-app-package-manager=y
+CONFIG_PACKAGE_luci-base=y
+CONFIG_PACKAGE_luci-lib-uqr=y
+CONFIG_PACKAGE_luci-light=y
+CONFIG_PACKAGE_luci-mod-admin-full=y
+CONFIG_PACKAGE_luci-mod-network=y
+CONFIG_PACKAGE_luci-mod-status=y
+CONFIG_PACKAGE_luci-mod-system=y
+CONFIG_PACKAGE_luci-proto-ipv6=y
+CONFIG_PACKAGE_luci-ssl=y
+CONFIG_PACKAGE_luci-theme-bootstrap=y
+CONFIG_PACKAGE_px5g-mbedtls=y
+CONFIG_PACKAGE_rpcd=y
+CONFIG_PACKAGE_rpcd-mod-file=y
+CONFIG_PACKAGE_rpcd-mod-iwinfo=y
+CONFIG_PACKAGE_rpcd-mod-luci=y
+CONFIG_PACKAGE_rpcd-mod-rpcsys=y
+CONFIG_PACKAGE_rpcd-mod-rrdns=y
+CONFIG_PACKAGE_rpcd-mod-ucode=y
+CONFIG_PACKAGE_ucode-mod-html=y
+CONFIG_PACKAGE_ucode-mod-log=y
+CONFIG_PACKAGE_ucode-mod-math=y
+CONFIG_PACKAGE_uhttpd=y
+CONFIG_PACKAGE_uhttpd-mod-ubus=y
+CONFIG_PCRE2_JIT_ENABLED=y
+# Lua (needed for quectel-5g-tools + 5g-led-bars)
+CONFIG_PACKAGE_lua=y
+CONFIG_PACKAGE_luaposix=y
+# CLI tools
+CONFIG_PACKAGE_curl=y
+CONFIG_PACKAGE_htop=y
+CONFIG_PACKAGE_procps-ng=y
+CONFIG_PACKAGE_procps-ng-pgrep=y
+CONFIG_PACKAGE_procps-ng-pkill=y
+CONFIG_PACKAGE_procps-ng-ps=y
+CONFIG_PACKAGE_procps-ng-w=y
+CONFIG_PACKAGE_vim-full=y
+CONFIG_PACKAGE_tcpdump=y
+CONFIG_PACKAGE_ip-full=y
+CONFIG_PACKAGE_ethtool=y
+CONFIG_PACKAGE_iftop=y
+CONFIG_PACKAGE_iperf3=y
+CONFIG_PACKAGE_bind-dig=y
+CONFIG_PACKAGE_strace=y
+CONFIG_PACKAGE_rsync=y
+CONFIG_PACKAGE_tmux=y
+# Prometheus
+CONFIG_PACKAGE_prometheus-node-exporter-lua=y
+CONFIG_PACKAGE_prometheus-node-exporter-lua-netstat=y
+CONFIG_PACKAGE_prometheus-node-exporter-lua-openwrt=y
+CONFIG_PACKAGE_prometheus-node-exporter-lua-wifi=y
+CONFIG_PACKAGE_prometheus-node-exporter-lua-wifi_stations=y
+# DNS
+CONFIG_PACKAGE_dnsmasq-full=y
+# Wireless - add full wpad for 802.11r
+# CONFIG_PACKAGE_wpad-basic-mbedtls is not set
+CONFIG_PACKAGE_wpad-mbedtls=y
+
+# `src-link custom feeds-local` in feeds.conf is a build-only symlink
+# feed (vjt forks pulled in by x3000/prepare.sh). Defconfig would set
+# CONFIG_FEED_custom=y, which makes the apk image step template
+# https://downloads.openwrt.org/releases/<v>/packages/<arch>/custom/packages.adb
+# into /etc/apk/repositories.d/distfeeds.list — a URL that does not
+# exist and breaks every `apk update` on the box. Pinning =m emits the
+# line commented-out, so apk silently ignores it but the build infra
+# still knows custom packages are selectable.
+CONFIG_FEED_custom=m
