@@ -62,7 +62,7 @@ cleanup() {
 trap cleanup EXIT
 
 cmd_feed() {
-    local dry=0 tag head base kver private_kver origins image commit
+    local dry=0 tag head base kver origins image commit
     if [[ "${1:-}" == "--dry-run" ]]; then
         dry=1
         shift
@@ -93,11 +93,7 @@ cmd_feed() {
     feed_log "4/7 kernel consistency"
     kver="$(feed_manifest_kernel "$(feed_manifest_path "$PUBLIC_BIN")")"
     feed_check_kmods "$PUBLIC_BIN/packages" "$kver"
-    if [[ -f "$PRIVATE_BIN/FEED_TAG" && "$(cat "$PRIVATE_BIN/FEED_TAG")" == "$tag" ]]; then
-        private_kver="$(feed_manifest_kernel "$(feed_manifest_path "$PRIVATE_BIN")")"
-        [[ "$private_kver" == "$kver" ]] \
-            || feed_die "bin-x3000-private (also $tag) has kernel $private_kver, public has $kver"
-    fi
+    feed_check_private_kernel "$PRIVATE_BIN" "$tag" "$kver"
     feed_check_refresh "$WORK/pages" "$tag" "$kver"
 
     feed_log "5/7 stage gh-pages and check it on localhost"
@@ -146,8 +142,12 @@ cmd_upload() {
         [[ -f "$notes" ]] || feed_die "no such notes file: $notes"
     fi
 
-    feed_log "re-running the canary against the live feed"
     kver="$(feed_manifest_kernel "$(feed_manifest_path "$PUBLIC_BIN")")"
+    # The private build normally happens between feed and upload, so this
+    # is the check that can actually see it.
+    feed_check_private_kernel "$PRIVATE_BIN" "$tag" "$kver"
+
+    feed_log "re-running the canary against the live feed"
     feed_canary "$(feed_sysupgrade_path "$PUBLIC_BIN")" "$FEED_BASE_URL" "$kver"
 
     files="$(feed_release_files "$PUBLIC_BIN")"

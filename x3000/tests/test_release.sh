@@ -138,6 +138,21 @@ test_feed_refuses_private_build_with_another_kernel() {
     assert_stops_before_publish "bin-x3000-private (also t1) has kernel 6.12.104~aa-r1" feed t1
 }
 
+test_upload_refuses_private_build_with_another_kernel() {
+    # The documented order is feed, private --release build, upload: the
+    # private bin only carries the tag by the time of upload.
+    rel_setup
+    run_release feed t1
+    assert_eq "$RC" 0 "$OUT"
+    mkdir -p "$T/bin-x3000-private"
+    echo t1 > "$T/bin-x3000-private/FEED_TAG"
+    echo "kernel - 6.12.104~aa-r1" > "$(feed_manifest_path "$T/bin-x3000-private")"
+    run_release upload t1 --title T --notes-file "$TEST_TMP/notes.md"
+    assert_eq "$RC" 1 "$OUT"
+    assert_contains "$OUT" "bin-x3000-private (also t1) has kernel 6.12.104~aa-r1"
+    assert_no_file "$TEST_TMP/releases/t1"
+}
+
 test_feed_refuses_refresh_with_changed_kernel() {
     rel_setup
     run_release feed t1

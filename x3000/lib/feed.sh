@@ -311,6 +311,18 @@ feed_check_refresh() {
     fi
 }
 
+# The private build of a tag must carry the same kernel as the public
+# one, or its kmods would not match the feed. Only checked once the
+# private bin was built for this tag.
+feed_check_private_kernel() {
+    local private_bin="$1" tag="$2" kver="$3" private_kver
+    if [[ -f "$private_bin/FEED_TAG" && "$(cat "$private_bin/FEED_TAG")" == "$tag" ]]; then
+        private_kver="$(feed_manifest_kernel "$(feed_manifest_path "$private_bin")")"
+        [[ "$private_kver" == "$kver" ]] \
+            || feed_die "bin-x3000-private (also $tag) has kernel $private_kver, public has $kver"
+    fi
+}
+
 # Published names are immutable: a file already in gh-pages keeps its
 # bytes, so a stale index cached anywhere between us and a device still
 # resolves to the bytes it hashed. A rebuild with an unchanged version is
