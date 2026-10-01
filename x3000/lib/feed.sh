@@ -649,7 +649,7 @@ feed_canary_resolve() {
 # every package in custom/ must resolve, which proves their
 # dependencies are satisfiable on this image.
 feed_canary() {
-    local bin="$1" base="$2" kver="$3" work unsq root names init_out
+    local bin="$1" base="$2" kver="$3" work unsq root names init_out list line has_custom=0 has_kmods=0
     local -a pkgs
     work="$(feed_mktemp -d)"
     feed_extract_rootfs "$bin" "$work/root.sqfs"
@@ -663,6 +663,20 @@ feed_canary() {
     [[ -f "$root/etc/apk/repositories.d/$FEED_LIST_NAME" ]] || feed_die "canary: image has no $FEED_LIST_NAME"
     if [[ "$base" != "$FEED_BASE_URL" ]]; then
         sed -i "s|^$FEED_BASE_URL/|$base/|" "$root/etc/apk/repositories.d/$FEED_LIST_NAME"
+    fi
+    # The rewrite matches nothing when the image lists another base, and
+    # the canary would then resolve against whatever the image names (the
+    # live feed, say) and pass: require both lines to be under base.
+    list="$(cat "$root/etc/apk/repositories.d/$FEED_LIST_NAME")"
+    while IFS= read -r line; do
+        if [[ "$line" == "$base/custom/packages.adb" ]]; then
+            has_custom=1
+        elif [[ "$line" == "$base/kmods/"?*"/packages.adb" ]]; then
+            has_kmods=1
+        fi
+    done <<< "$list"
+    if (( ! has_custom || ! has_kmods )); then
+        feed_die "canary: the image's $FEED_LIST_NAME does not point at $base:"$'\n'"$list"
     fi
     # initdb is what fetches the indexes (apk 3.0.5), so an UNTRUSTED one
     # is reported here; add --simulate later only says "no such package".

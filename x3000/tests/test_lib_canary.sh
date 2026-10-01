@@ -54,3 +54,13 @@ test_canary_fails_on_image_without_feed_list() {
     FX_NO_LIST=1 fx_build_outputs "$R" t1
     assert_fails "feed_canary '$IMAGE' '$FX_URL/feed' '$FX_KVER_DEFAULT'" "image has no x3000feed.list"
 }
+
+test_canary_fails_on_image_pointing_at_another_feed() {
+    # An image whose list names another base is not rewritten to the
+    # staged feed: the canary would silently test whatever it lists.
+    setup_canary
+    FEED_BASE_URL=https://other.example/feed fx_build_outputs "$R" t1
+    assert_fails "feed_canary '$IMAGE' '$FX_URL/feed' '$FX_KVER_DEFAULT'" \
+        "canary: the image's x3000feed.list does not point at $FX_URL/feed"
+    assert_contains "$RUN_OUT" "https://other.example/feed/custom/packages.adb"
+}
