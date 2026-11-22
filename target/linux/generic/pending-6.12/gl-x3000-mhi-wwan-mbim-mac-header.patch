@@ -1,0 +1,43 @@
+Subject: [PATCH] net: wwan: mhi_wwan_mbim: initialise mac header in RX path
+
+mhi_mbim_rx() hands the de-aggregated datagrams to netif_rx() without
+setting skb->mac_header, which keeps its ~0U initial value. Since
+commit 1e4033b53db4 ("net: skb_reset_mac_len() must check if
+mac_header was set") the core catches this with a DEBUG_NET warning.
+Kernels without that commit compute skb->mac_len as network_header + 1,
+and a tc ingress mirred redirect to an ifb device, the usual way to
+shape download traffic (e.g. sqm-scripts), then pushes the packet back
+one byte before skb->head:
+
+  skbuff: skb_under_panic: text:ffffffc078fd9908 len:149 put:65 head:ffffff8000924000 data:ffffff8000923fff tail:0x94 end:0x180 dev:wwan0
+  Kernel BUG at skb_panic+0x4c/0x50
+  Call trace:
+   skb_panic+0x4c/0x50
+   skb_push+0x44/0x50
+   tcf_action_exec+0xa8/0x1c0
+   tcf_classify+0x14/0x20
+   tc_run+0xe4/0x150
+   __netif_receive_skb_core.constprop.0+0x614/0xe90
+   process_backlog+0x78/0x174
+   net_rx_action+0x370/0x3e0
+
+Initialise the mac header at the start of the IP packet, as qmi_wwan
+does since commit 0de0add10e58 ("qmi_wwan: Add missing
+skb_reset_mac_header-call").
+
+Fixes: aa730a9905b7 ("net: wwan: Add MHI MBIM network driver")
+Closes: https://github.com/vjt/openwrt-glinet-x3000/issues/15
+---
+ drivers/net/wwan/mhi_wwan_mbim.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+--- a/drivers/net/wwan/mhi_wwan_mbim.c
++++ b/drivers/net/wwan/mhi_wwan_mbim.c
+@@ -353,6 +353,7 @@ static void mhi_mbim_rx(struct mhi_mbim_
+ 			u64_stats_add(&link->rx_bytes, skbn->len);
+ 			u64_stats_update_end(&link->rx_syncp);
+ 
++			skb_reset_mac_header(skbn);
+ 			netif_rx(skbn);
+ 		}
+ unlock:
