@@ -1,0 +1,60 @@
+From 1e4033b53db48cc77c436feac9c6d7d63db87b87 Mon Sep 17 00:00:00 2001
+From: Eric Dumazet <edumazet@google.com>
+Date: Tue, 5 Nov 2024 17:43:57 +0000
+Subject: [PATCH] net: skb_reset_mac_len() must check if mac_header was set
+
+Recent discussions show that skb_reset_mac_len() should be more careful.
+
+We expect the MAC header being set.
+
+If not, clear skb->mac_len and fire a warning for CONFIG_DEBUG_NET=y builds.
+
+If after investigations we find that not having a MAC header was okay,
+we can remove the warning.
+
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Link: https://lore.kernel.org/netdev/CANn89iJZGH+yEfJxfPWa3Hm7jxb-aeY2Up4HufmLMnVuQXt38A@mail.gmail.com/T/
+Cc: En-Wei Wu <en-wei.wu@canonical.com>
+Reviewed-by: Joe Damato <jdamato@fastly.com>
+Reviewed-by: Xuan Zhuo <xuanzhuo@linux.alibaba.com>
+Link: https://patch.msgid.link/20241105174403.850330-2-edumazet@google.com
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+---
+ include/linux/skbuff.h | 17 +++++++++++------
+ 1 file changed, 11 insertions(+), 6 deletions(-)
+
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -2926,9 +2926,19 @@ static inline void skb_reset_inner_heade
+ 	skb->inner_transport_header = skb->transport_header;
+ }
+ 
++static inline int skb_mac_header_was_set(const struct sk_buff *skb)
++{
++	return skb->mac_header != (typeof(skb->mac_header))~0U;
++}
++
+ static inline void skb_reset_mac_len(struct sk_buff *skb)
+ {
+-	skb->mac_len = skb->network_header - skb->mac_header;
++	if (!skb_mac_header_was_set(skb)) {
++		DEBUG_NET_WARN_ON_ONCE(1);
++		skb->mac_len = 0;
++	} else {
++		skb->mac_len = skb->network_header - skb->mac_header;
++	}
+ }
+ 
+ static inline unsigned char *skb_inner_transport_header(const struct sk_buff
+@@ -3083,11 +3093,6 @@ static inline void skb_set_network_heade
+ 	skb->network_header += offset;
+ }
+ 
+-static inline int skb_mac_header_was_set(const struct sk_buff *skb)
+-{
+-	return skb->mac_header != (typeof(skb->mac_header))~0U;
+-}
+-
+ static inline unsigned char *skb_mac_header(const struct sk_buff *skb)
+ {
+ 	DEBUG_NET_WARN_ON_ONCE(!skb_mac_header_was_set(skb));
